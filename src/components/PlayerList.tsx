@@ -11,27 +11,32 @@ interface Player {
 interface PlayerListProps {
   players: Player[];
   myPeerId?: string;
+  leaderId?: string | null;
 }
 
-const PlayerList: React.FC<PlayerListProps> = ({ players, myPeerId }) => {
+const PlayerList: React.FC<PlayerListProps> = ({ players, myPeerId, leaderId }) => {
   return (
     <div className="player-list-container">
-      <h3 className="list-title">اللاعبين المتواجدين</h3>
+      <h3 className="list-title">ترتيب المتحدين</h3>
       <div className="players-grid">
-        {players.map((player) => (
+        {players.sort((a,b) => b.score - a.score).map((player) => (
           <div 
-            key={player.peerId} 
-            className={`player-item ${player.peerId === myPeerId ? 'is-me' : ''}`}
+            key={player.id} 
+            className={`player-item ${player.id === myPeerId ? 'is-me' : ''} ${player.isFinished ? 'finished' : ''}`}
           >
-            <div className="player-avatar">{player.icon}</div>
+            <div className="player-avatar">
+               {player.icon}
+               {player.id === leaderId && <span className="leader-crown">👑</span>}
+            </div>
             <div className="player-info">
               <span className="player-name">
                 {player.name}
-                {player.peerId === myPeerId && <span className="me-badge">(أنت)</span>}
+                {player.id === myPeerId && <span className="me-badge">(أنت)</span>}
+                {player.isFinished && <span className="finish-check" title="أنهى اللعبة">✅</span>}
               </span>
               <span className="player-score">سكور: {player.score}</span>
             </div>
-            {player.isHost && <span className="host-icon" title="مضيف الغرفة">👑</span>}
+            {player.isHost && <span className="host-icon" title="مضيف الغرفة">🏠</span>}
           </div>
         ))}
       </div>
@@ -76,15 +81,34 @@ const PlayerList: React.FC<PlayerListProps> = ({ players, myPeerId }) => {
           background-color: rgba(0, 215, 192, 0.05);
         }
 
+        .player-item.finished {
+          opacity: 0.8;
+          background-color: #1c2128;
+        }
+
         .player-avatar {
           font-size: 24px;
           background-color: #1c2128;
-          width: 40px;
-          height: 40px;
+          width: 44px;
+          height: 44px;
           display: flex;
           align-items: center;
           justify-content: center;
           border-radius: 50%;
+          position: relative;
+        }
+
+        .leader-crown {
+          position: absolute;
+          top: -12px;
+          right: -5px;
+          font-size: 18px;
+          transform: rotate(15deg);
+        }
+
+        .finish-check {
+          font-size: 14px;
+          margin-right: 8px;
         }
 
         .player-info {

@@ -1,293 +1,178 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Peer } from 'peerjs';
-import type { DataConnection } from 'peerjs';
+import mqtt from 'mqtt';
 
-const ROOM_PREFIX = 'GAMEJOKE-';
+const BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
+const ROOM_TOPIC_PREFIX = 'gamejoke/rooms/';
 const ICONS = ['🦊', '🐶', '🐱', '🐭', '🐹', '🐰', '🐯', '🦁'];
 
-interface Player {
-  peerId: string;
+export interface Player {
+  id: string; // Using mqtt client id or random id
   name: string;
   icon: string;
   score: number;
-  isHost?: boolean;
+  isHost: boolean;
+  isFinished: boolean;
+  finishTime?: number; // timestamp
 }
 
-interface SyncData {
-  type: 'IDENTITY' | 'SCORE_UPDATE' | 'GAME_RESET' | 'START_GAME' | 'INITIAL_BOARD' | 'PLAYER_LIST' | 'PING';
-  name?: string;
-  icon?: string;
-  pairsMatched?: number;
+interface GameState {
+  type: 'IDENTITY' | 'PLAYER_UPDATE' | 'BOARD_SYNC' | 'RESTART' | 'KEEPALIVE';
+  player?: Player;
   board?: any[];
-  players?: Player[];
+  allPlayers?: Player[];
 }
 
 export const useMultiplayer = (
-  roomCode?: string, 
+  roomCode?: string,
   playerName?: string,
   onReceiveBoard?: (board: any[]) => void,
   enabled: boolean = false
 ) => {
-  const [peer, setPeer] = useState<Peer | null>(null);
   const [playerList, setPlayerList] = useState<Player[]>([]);
   const [isHost, setIsHost] = useState(!roomCode);
   const [status, setStatus] = useState<'IDLE' | 'CONNECTING' | 'CONNECTED' | 'ERROR'>('IDLE');
-  const [detailedStatus, setDetailedStatus] = useState<string>('بانتظار البدء...');
+  const [detailedStatus, setDetailedStatus] = useState('بانتظار البدء...');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [generatedCode, setGeneratedCode] = useState<string>(roomCode || '');
-  const [logs, setLogs] = useState<string[]>([]);
-  const [retryTrigger, setRetryTrigger] = useState(0);
-
-  const connectionsRef = useRef<{ [peerId: string]: DataConnection }>({});
+  const [generatedCode, setGeneratedCode] = useState(roomCode || '');
+  const [myId] = useState(() => Math.random().toString(36).substring(2, 10));
+  
+  const clientRef = useRef<mqtt.MqttClient | null>(null);
   const myIconRef = useRef(ICONS[Math.floor(Math.random() * ICONS.length)]);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
-  const collisionCountRef = useRef(0);
+  const playerStateRef = useRef<Player | null>(null);
 
-  const addLog = useCallback((msg: string) => {
-    const time = new Date().toLocaleTimeString();
-    setLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 50));
-    console.log(`[GameLog] ${msg}`);
-  }, []);
+  const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
-  const generateCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
-
-  const broadcastPlayerList = useCallback((currentPlayers: Player[]) => {
-    Object.values(connectionsRef.current).forEach(conn => {
-      if (conn.open) {
-        conn.send({ type: 'PLAYER_LIST', players: currentPlayers });
-      }
-    });
-  }, []);
-
-  const startHeartbeat = useCallback(() => {
-    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-    heartbeatRef.current = setInterval(() => {
-      Object.values(connectionsRef.current).forEach(conn => {
-        if (conn.open) {
-          conn.send({ type: 'PING' });
-        }
-      });
-    }, 10000);
-  }, []);
+  const publish = useCallback((data: GameState) => {
+    if (clientRef.current?.connected && roomCode || generatedCode) {
+      const topic = `${ROOM_TOPIC_PREFIX}${roomCode || generatedCode}`;
+      clientRef.current.publish(topic, JSON.stringify(data), { qos: 1 });
+    }
+  }, [roomCode, generatedCode]);
 
   useEffect(() => {
     if (!enabled || !playerName) {
-      if (peer) {
-        peer.destroy();
-        setPeer(null);
+      if (clientRef.current) {
+        clientRef.current.end();
+        clientRef.current = null;
       }
       setStatus('IDLE');
       setPlayerList([]);
-      connectionsRef.current = {};
       return;
     }
 
-    setErrorMsg(null);
     setStatus('CONNECTING');
-
+    setDetailedStatus('جاري الاتصال بخادم المزامنة اللاسلكي...');
+    
+    const code = roomCode ? roomCode.trim().toUpperCase() : generateCode();
+    setGeneratedCode(code);
     const host = !roomCode;
     setIsHost(host);
-    
-    let finalCode = roomCode ? roomCode.trim().toUpperCase() : generateCode();
-    setGeneratedCode(finalCode);
 
-    addLog(host ? `جاري فتح غرفة: ${finalCode}` : `جاري الانضمام للغرفة: ${finalCode}`);
-    setDetailedStatus(host ? 'جاري الاتصال بخادم الألعاب...' : 'جاري البحث عن المضيف...');
+    const client = mqtt.connect(BROKER_URL, {
+      clientId: `gamejoke_${myId}`,
+      clean: true,
+      connectTimeout: 4000,
+      reconnectPeriod: 2000,
+    });
 
-    const peerId = (host && collisionCountRef.current < 2) ? ROOM_PREFIX + finalCode : undefined;
+    clientRef.current = client;
 
-    // HIGH-AVAILABILITY TURN RELAY CONFIGURATION (Metered OpenRelay)
-    const peerOptions = {
-      debug: 2,
-      secure: true,
-      config: {
-        'iceServers': [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun.cloudflare.com:3478' },
-          {
-            urls: [
-              'turn:openrelay.metered.ca:80',
-              'turn:openrelay.metered.ca:443',
-              'turn:openrelay.metered.ca:443?transport=tcp'
-            ],
-            username: 'openrelay',
-            credential: 'openrelay'
-          }
-        ],
-        'iceTransportPolicy': 'all',
-        'iceCandidatePoolSize': 10
-      }
+    const me: Player = {
+      id: myId,
+      name: playerName,
+      icon: myIconRef.current,
+      score: 0,
+      isHost: host,
+      isFinished: false
     };
+    playerStateRef.current = me;
+    setPlayerList([me]);
 
-    const newPeer = peerId ? new Peer(peerId, peerOptions) : new Peer(peerOptions);
-    let isDestroyed = false;
-    
-    newPeer.on('open', (id) => {
-      if (isDestroyed) return;
-      addLog(`✅ متصل بهوية: ${id}`);
-      setPeer(newPeer);
-      
-      const self: Player = {
-        peerId: id,
-        name: playerName,
-        icon: myIconRef.current,
-        score: 0,
-        isHost: host
-      };
-      setPlayerList([self]);
-
-      if (roomCode) {
-        connectToHost(ROOM_PREFIX + roomCode.trim().toUpperCase(), newPeer);
-      } else {
-        setStatus('IDLE');
-        setDetailedStatus('الغرفة جاهزة! بانتظار الخصم...');
-      }
-    });
-
-    newPeer.on('error', (err) => {
-      if (isDestroyed) return;
-      const errorDetail = err.message || err.type || JSON.stringify(err);
-      addLog(`!! خطأ تقني: ${errorDetail}`);
-
-      if (err.type === 'peer-unavailable') {
-        setErrorMsg('الغرفة غير موجودة. تأكد من الكود.');
-        setStatus('ERROR');
-      } else if (err.type === 'unavailable-id' && host) {
-        collisionCountRef.current++;
-        setTimeout(() => setRetryTrigger(prev => prev + 1), 1000);
-      } else {
-        setErrorMsg(`خطأ: ${err.type}`);
-        setStatus('ERROR');
-      }
-    });
-
-    newPeer.on('connection', (connection) => {
-      if (isDestroyed) return;
-      addLog(`لاعب جديد يطلب الربط: ${connection.peer}`);
-      setupConnection(connection);
-    });
-
-    return () => {
-      isDestroyed = true;
-      newPeer.destroy();
-      setPeer(null);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-    };
-  }, [roomCode, playerName, retryTrigger, enabled]);
-
-  const connectToHost = (targetId: string, peerInstance: Peer) => {
-    if (!peerInstance || peerInstance.destroyed) return;
-    
-    setStatus('CONNECTING');
-    setDetailedStatus('جاري محاولة الربط عبر خادم الترحيل...');
-    addLog(`طلب ربط تقني مع: ${targetId}`);
-    
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => {
-      if (status !== 'CONNECTED' && status !== 'ERROR') {
-        addLog('!! فشل عبور جدار الحماية حتى باستخدام الترحيل');
-        setErrorMsg('فشل الربط التقني. قد يكون بسبب حظر شديد من الـ 4G. جرب استبدال الشبكة.');
-        setStatus('ERROR');
-      }
-    }, 28000); // 28 seconds for TURN traversal
-
-    const connection = peerInstance.connect(targetId, { 
-      reliable: true,
-      serialization: 'json'
-    });
-    setupConnection(connection);
-  };
-
-  const setupConnection = (connection: DataConnection) => {
-    connection.on('open', () => {
-      addLog(`✅ نجاح الربط عبر TURN/STUN!`);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      connectionsRef.current[connection.peer] = connection;
+    client.on('connect', () => {
       setStatus('CONNECTED');
-      setDetailedStatus('متصل بنجاح!');
-      setErrorMsg(null);
-      startHeartbeat();
-      
-      connection.send({ 
-        type: 'IDENTITY', 
-        name: playerName, 
-        icon: myIconRef.current 
+      setDetailedStatus('متصل بنجاح (4G Ready)');
+      const topic = `${ROOM_TOPIC_PREFIX}${code}`;
+      client.subscribe(topic, (err) => {
+        if (!err) {
+          // Announce presence
+          client.publish(topic, JSON.stringify({ type: 'IDENTITY', player: me }), { qos: 1 });
+        }
       });
     });
 
-    connection.on('data', (data: any) => {
-      const syncData = data as SyncData;
-      if (syncData.type === 'IDENTITY') {
-        addLog(`انضمام الخصم: ${syncData.name}`);
-        if (isHost) {
+    client.on('message', (topic, message) => {
+      try {
+        const data = JSON.parse(message.toString()) as GameState;
+        
+        if (data.player?.id === myId && data.type !== 'KEEPALIVE') return;
+
+        if (data.type === 'IDENTITY' && data.player) {
           setPlayerList(prev => {
-            const newList = [...prev, { 
-              peerId: connection.peer, 
-              name: syncData.name || 'مجهول', 
-              icon: syncData.icon || '👤',
-              score: 0 
-            }];
-            setTimeout(() => broadcastPlayerList(newList), 500);
-            return newList;
+            const exists = prev.find(p => p.id === data.player?.id);
+            if (exists) return prev;
+            const updated = [...prev, data.player!];
+            // If I am host, reply with my sequence
+            if (host) {
+               client.publish(topic, JSON.stringify({ type: 'IDENTITY', player: me }), { qos: 1 });
+            }
+            return updated;
           });
+        } 
+        else if (data.type === 'PLAYER_UPDATE' && data.player) {
+          setPlayerList(prev => prev.map(p => p.id === data.player?.id ? data.player! : p));
         }
-      } else if (syncData.type === 'PLAYER_LIST') {
-        setPlayerList(syncData.players || []);
-        setStatus('CONNECTED');
-      } else if (syncData.type === 'SCORE_UPDATE') {
-        setPlayerList(prev => prev.map(p => 
-          p.peerId === connection.peer ? { ...p, score: syncData.pairsMatched || 0 } : p
-        ));
-      } else if (syncData.type === 'INITIAL_BOARD' && syncData.board) {
-        if (onReceiveBoard) onReceiveBoard(syncData.board);
+        else if (data.type === 'BOARD_SYNC' && data.board && !host) {
+          if (onReceiveBoard) onReceiveBoard(data.board);
+        }
+        else if (data.type === 'RESTART') {
+           // This will be handled in App.tsx by observing resets
+           window.dispatchEvent(new CustomEvent('gamejoke_restart'));
+        }
+      } catch (e) {
+        console.error('MQTT Parse Error', e);
       }
     });
 
-    connection.on('close', () => {
-      addLog('!! انقطع الربط التقني');
-      delete connectionsRef.current[connection.peer];
-      setPlayerList(prev => prev.filter(p => p.peerId !== connection.peer));
-    });
-
-    connection.on('error', (err) => {
-      addLog(`!! خطأ في قناة الربط: ${err}`);
+    client.on('error', (err) => {
+      console.error('MQTT Error', err);
       setStatus('ERROR');
+      setErrorMsg('فشل الاتصال بخادم المزامنة. تأكد من الإنترنت.');
     });
-  };
 
-  const syncScore = useCallback((pairsMatched: number) => {
-    Object.values(connectionsRef.current).forEach(conn => {
-      if (conn.open) {
-        conn.send({ type: 'SCORE_UPDATE', pairsMatched });
-      }
-    });
-  }, []);
+    return () => {
+      client.end();
+      clientRef.current = null;
+    };
+  }, [enabled, playerName, roomCode, myId]);
 
-  const sendBoard = useCallback((board: any[]) => {
-    Object.values(connectionsRef.current).forEach(conn => {
-      if (conn.open) {
-        conn.send({ type: 'INITIAL_BOARD', board });
-      }
-    });
-  }, []);
+  const updateMyState = useCallback((updates: Partial<Player>) => {
+    if (!playerStateRef.current) return;
+    
+    const newState = { ...playerStateRef.current, ...updates };
+    playerStateRef.current = newState;
+    
+    setPlayerList(prev => prev.map(p => p.id === myId ? newState : p));
+    publish({ type: 'PLAYER_UPDATE', player: newState });
+  }, [myId, publish]);
+
+  const broadcastBoard = useCallback((board: any[]) => {
+    publish({ type: 'BOARD_SYNC', board });
+  }, [publish]);
+
+  const broadcastRestart = useCallback(() => {
+    publish({ type: 'RESTART' });
+  }, [publish]);
 
   return {
-    peer,
     playerList,
     isHost,
     status,
     detailedStatus,
     errorMsg,
     generatedCode,
-    logs,
-    syncScore,
-    sendBoard,
-    myPeerId: peer?.id,
-    myIcon: myIconRef.current
+    myId,
+    updateMyState,
+    broadcastBoard,
+    broadcastRestart
   };
 };
