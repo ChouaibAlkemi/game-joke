@@ -61,7 +61,7 @@ export const useMultiplayer = (
     }
 
     const peerId = !roomCode ? ROOM_PREFIX + finalCode : undefined;
-    const newPeer = new Peer(peerId);
+    const newPeer = peerId ? new Peer(peerId) : new Peer();
     
     newPeer.on('open', (id) => {
       setPeer(newPeer);
