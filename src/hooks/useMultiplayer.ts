@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import mqtt from 'mqtt';
 
 const BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
-const ROOM_TOPIC_PREFIX = 'gamejoke/rooms/';
+const ROOM_TOPIC_PREFIX = 'akahow/rooms/';
 const ICONS = ['🦊', '🐶', '🐱', '🐭', '🐹', '🐰', '🐯', '🦁'];
 
 export interface Player {
@@ -56,10 +56,10 @@ export const useMultiplayer = (
 
   // PERSISTENT ID
   const [myId] = useState(() => {
-    let id = localStorage.getItem('gamejoke_player_id');
+    let id = localStorage.getItem('akahow_player_id');
     if (!id) {
       id = Math.random().toString(36).substring(2, 10);
-      localStorage.setItem('gamejoke_player_id', id);
+      localStorage.setItem('akahow_player_id', id);
     }
     return id;
   });
@@ -102,7 +102,7 @@ export const useMultiplayer = (
     setIsHost(host);
 
     const client = mqtt.connect(BROKER_URL, {
-      clientId: `gamejoke_${myId}`,
+      clientId: `akahow_${myId}`,
       clean: true,
       connectTimeout: 5000,
       reconnectPeriod: 2000,
@@ -175,7 +175,7 @@ export const useMultiplayer = (
           if (onReceiveBoard) onReceiveBoard(data.board);
         }
         else if (data.type === 'RESTART') {
-           window.dispatchEvent(new CustomEvent('gamejoke_restart'));
+           window.dispatchEvent(new CustomEvent('akahow_restart'));
         }
       } catch (e) {
         console.error('MQTT Parse Error', e);

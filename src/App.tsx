@@ -31,7 +31,7 @@ interface CardType {
 
 function App() {
   const [gameMode, setGameMode] = useState<'lobby' | 'solo' | 'multiplayer'>('lobby');
-  const [playerName, setPlayerName] = useState<string>(() => localStorage.getItem('gamejoke_player_name') || '');
+  const [playerName, setPlayerName] = useState<string>(() => localStorage.getItem('akahow_player_name') || '');
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>(undefined);
   const [isConnectionActive, setIsConnectionActive] = useState(false);
   
@@ -141,8 +141,8 @@ function App() {
       updateMyState({ matchCountRequired: 2, score: 0, isFinished: false });
       initializeBoard();
     };
-    window.addEventListener('gamejoke_restart', onRemoteRestart);
-    return () => window.removeEventListener('gamejoke_restart', onRemoteRestart);
+    window.addEventListener('akahow_restart', onRemoteRestart);
+    return () => window.removeEventListener('akahow_restart', onRemoteRestart);
   }, [initializeBoard, updateMyState]);
 
   useEffect(() => {
@@ -306,6 +306,7 @@ function App() {
 
   const handleSelectMode = (mode: 'solo' | 'multiplayer', name: string, roomCode?: string) => {
     setPlayerName(name);
+    localStorage.setItem('akahow_player_name', name);
     if (mode === 'solo') {
       setGameMode('solo');
       setIsConnectionActive(false);
@@ -340,7 +341,7 @@ function App() {
           <div className="logo-mini">
             <img src="/LOGO.png" alt="Logo" />
           </div>
-          <h1>لعبة الذاكرة المطورة</h1>
+          <h1>أكاهو - Akahow</h1>
           <p className={`subtitle ${localMatchCount === 3 ? 'warning-text' : ''}`}>
             {localMatchCount === 3 ? '⚠️ وضع التحدي الثلاثي مفعل لديك ⚠️' : 'مطابقة زوجية قياسية'}
           </p>

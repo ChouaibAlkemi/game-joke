@@ -19,7 +19,7 @@ const Lobby: React.FC<LobbyProps> = ({
 }) => {
   const [showJoinInput, setShowJoinInput] = useState(false);
   const [roomCode, setRoomCode] = useState('');
-  const [playerName, setPlayerName] = useState(() => localStorage.getItem('gamejoke_player_name') || '');
+  const [playerName, setPlayerName] = useState(() => localStorage.getItem('akahow_player_name') || '');
   const [localError, setLocalError] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState(false);
 
@@ -35,7 +35,7 @@ const Lobby: React.FC<LobbyProps> = ({
       return;
     }
     setLocalError(null);
-    localStorage.setItem('gamejoke_player_name', playerName.trim());
+    localStorage.setItem('akahow_player_name', playerName.trim());
     onSelectMode(mode, playerName.trim(), code);
   };
 
@@ -60,7 +60,7 @@ const Lobby: React.FC<LobbyProps> = ({
           <img src="/LOGO.png" alt="Logo" className="main-logo" />
         </div>
         
-        <h1 className="lobby-title">استمتع باللعب أثناء الانتظار</h1>
+        <h1 className="lobby-title">أكاهو - عالَم الذاكرة والتحدي</h1>
 
         <div className="name-section">
           <label className="input-label">ما هو اسمك؟</label>
