@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface Player {
-  peerId: string;
-  name: string;
-  icon: string;
-  score: number;
-  isHost?: boolean;
-}
+import type { Player } from '../hooks/useMultiplayer';
 
 interface PlayerListProps {
   players: Player[];

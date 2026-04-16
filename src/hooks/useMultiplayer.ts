@@ -43,7 +43,7 @@ export const useMultiplayer = (
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   const publish = useCallback((data: GameState) => {
-    if (clientRef.current?.connected && roomCode || generatedCode) {
+    if (clientRef.current && clientRef.current.connected && (roomCode || generatedCode)) {
       const topic = `${ROOM_TOPIC_PREFIX}${roomCode || generatedCode}`;
       clientRef.current.publish(topic, JSON.stringify(data), { qos: 1 });
     }
