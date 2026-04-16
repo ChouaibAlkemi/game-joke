@@ -25,7 +25,7 @@ interface CardType {
 
 function App() {
   const [gameMode, setGameMode] = useState<'lobby' | 'solo' | 'multiplayer'>('lobby');
-  const [playerName, setPlayerName] = useState<string>('');
+  const [playerName, setPlayerName] = useState<string>(() => localStorage.getItem('gamejoke_player_name') || '');
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>(undefined);
   
   const [cards, setCards] = useState<CardType[]>([]);
@@ -67,6 +67,18 @@ function App() {
     setShowWinner(false);
   }, []);
 
+  const handleExit = () => {
+    // Completely reset everything
+    setGameMode('lobby');
+    setSelectedRoom(undefined);
+    setCards([]);
+    setPairsMatched(0);
+    setMoves(0);
+    // Force a reload to clear the PeerJS instance completely if needed
+    // window.location.reload(); 
+    // Or just let the hook cleanup handle it
+  };
+
   // Effect to handle transitions from Lobby to Multiplayer game
   useEffect(() => {
     const isGuestWaiting = gameMode === 'lobby' && selectedRoom && status === 'CONNECTED';
@@ -87,14 +99,14 @@ function App() {
   }, [gameMode, initializeGame]);
 
   useEffect(() => {
-    if (gameMode === 'multiplayer') {
+    if (gameMode === 'multiplayer' && status === 'CONNECTED') {
       syncScore(pairsMatched);
     }
     
     if (pairsMatched === TOTAL_PAIRS && TOTAL_PAIRS > 0) {
       setShowWinner(true);
     }
-  }, [pairsMatched, gameMode, syncScore]);
+  }, [pairsMatched, gameMode, status, syncScore]);
 
   const handleCardClick = (id: number) => {
     if (lockBoard || flippedCards.includes(id)) return;
@@ -142,8 +154,6 @@ function App() {
     if (mode === 'solo') {
       setGameMode('solo');
     } else {
-      // For multiplayer, we set the room but wait for status === 'CONNECTED' 
-      // which is handled by the useEffect above
       setSelectedRoom(roomCode);
     }
   };
@@ -179,10 +189,11 @@ function App() {
           </nav>
         </div>
         <div className="header-left">
+          <button className="btn btn-exit" onClick={handleExit}>خروج ←</button>
           {gameMode === 'multiplayer' && (
             <div className="room-info">
               <span className="label">كود الغرفة:</span>
-              <span className="code">{generatedCode}</span>
+              <span className="code">{generatedCode || selectedRoom || '...'}</span>
               <div className={`status-dot ${status}`}></div>
             </div>
           )}
@@ -219,7 +230,7 @@ function App() {
 
           <div className="game-controls">
             <button className="btn btn-primary" onClick={initializeGame}>إعادة التشغيل</button>
-            <button className="btn btn-secondary" onClick={() => setGameMode('lobby')}>العودة للرئيسية</button>
+            <button className="btn btn-secondary" onClick={handleExit}>العودة للرئيسية</button>
           </div>
         </main>
 
@@ -243,6 +254,13 @@ function App() {
           justify-content: space-between;
           align-items: flex-start;
           margin-bottom: 40px;
+        }
+
+        .header-left {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 15px;
         }
 
         .logo-mini { width: 60px; height: auto; margin-bottom: 16px; }
@@ -270,16 +288,25 @@ function App() {
           border: 1px solid #30363d;
         }
 
-        .room-info .code { color: var(--accent); font-weight: 800; }
+        .room-info .code { color: var(--accent); font-weight: 800; font-family: monospace; }
 
         .status-dot { width: 8px; height: 8px; border-radius: 50%; }
-        .status-dot.CONNECTED { background-color: #238636; }
+        .status-dot.CONNECTED { background-color: #238636; box-shadow: 0 0 5px #238636; }
         .status-dot.CONNECTING { background-color: #d29922; }
         .status-dot.ERROR { background-color: #f85149; }
 
-        .btn { padding: 12px 24px; border-radius: 8px; font-weight: 700; cursor: pointer; border: none; }
+        .btn { padding: 12px 24px; border-radius: 8px; font-weight: 700; cursor: pointer; border: none; transition: 0.2s; }
         .btn-primary { background-color: var(--accent); color: #000; }
         .btn-secondary { background-color: #30363d; color: var(--text-primary); }
+        
+        .btn-exit {
+          background-color: rgba(248, 81, 73, 0.1);
+          color: #f85149;
+          border: 1px solid rgba(248, 81, 73, 0.2);
+          padding: 6px 16px;
+          font-size: 13px;
+        }
+        .btn-exit:hover { background-color: #f85149; color: #fff; }
 
         .winner-overlay {
           position: absolute; top: 0; left: 0; right: 0; bottom: 0;
