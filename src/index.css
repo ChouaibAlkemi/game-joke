@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #0a0e14;
+  --card-bg: #30363d;
+  --card-hover: #3b434b;
+  --accent: #00d7c0;
+  --accent-muted: rgba(0, 215, 192, 0.2);
+  --text-primary: #ffffff;
+  --text-secondary: #8b949e;
+  --font-family: 'Cairo', 'Inter', system-ui, -apple-system, sans-serif;
+  --transition-speed: 0.3s;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  -webkit-font-smoothing: antialiased;
+  direction: rtl; /* Set default direction to RTL */
+}
+
+#root {
+  width: 100%;
+}
+
+h1, h2, h3 {
+  font-weight: 700;
+}
+
+input, button {
+  font-family: inherit;
+}
+
+/* Animations */
+@keyframes flip-in {
+  from {
+    transform: rotateY(180deg);
+    opacity: 0;
+  }
+  to {
+    transform: rotateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fade-in 0.5s ease-out forwards;
+}
