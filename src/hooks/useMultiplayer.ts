@@ -36,6 +36,7 @@ export const useMultiplayer = (
 
   const connectionsRef = useRef<{ [peerId: string]: DataConnection }>({});
   const myIconRef = useRef(ICONS[Math.floor(Math.random() * ICONS.length)]);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const generateCode = () => {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -83,7 +84,6 @@ export const useMultiplayer = (
     });
 
     newPeer.on('connection', (connection) => {
-      // Host side receiving a guest
       setupConnection(connection);
     });
 
@@ -92,32 +92,47 @@ export const useMultiplayer = (
       if (err.type === 'peer-unavailable') {
         setErrorMsg('لم يتم العثور على الغرفة. تأكد من الكود.');
         setStatus('ERROR');
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
       } else if (err.type === 'unavailable-id' && !roomCode) {
         const retryCode = generateCode();
         setGeneratedCode(retryCode);
       } else {
         setErrorMsg('حدث خطأ في الاتصال.');
         setStatus('ERROR');
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
       }
     });
 
     return () => {
       newPeer.destroy();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, [roomCode, playerName]);
 
   const connectToHost = (targetId: string, peerInstance: Peer) => {
     setStatus('CONNECTING');
+    setErrorMsg(null);
+    
+    // Set a timeout for the connection attempt
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      if (status !== 'CONNECTED') {
+        setErrorMsg('الجلسة غير متوفرة أو أن الكود غير صحيح.');
+        setStatus('ERROR');
+      }
+    }, 5000); // 5 second timeout
+
     const connection = peerInstance.connect(targetId);
     setupConnection(connection);
   };
 
   const setupConnection = (connection: DataConnection) => {
     connection.on('open', () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       connectionsRef.current[connection.peer] = connection;
       setStatus('CONNECTED');
+      setErrorMsg(null);
       
-      // Send identity to host or peer
       connection.send({ 
         type: 'IDENTITY', 
         name: playerName, 
@@ -130,7 +145,6 @@ export const useMultiplayer = (
       
       if (syncData.type === 'IDENTITY') {
         if (isHost) {
-          // Host adds the new player and broadcasts the updated list
           setPlayerList(prev => {
             const newList = [...prev, { 
               peerId: connection.peer, 
@@ -138,7 +152,6 @@ export const useMultiplayer = (
               icon: syncData.icon || '👤',
               score: 0 
             }];
-            // Small delay to ensure connection is ready
             setTimeout(() => broadcastPlayerList(newList), 500);
             return newList;
           });
@@ -146,6 +159,7 @@ export const useMultiplayer = (
       } else if (syncData.type === 'PLAYER_LIST' && syncData.players) {
         setPlayerList(syncData.players);
         setStatus('CONNECTED');
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
       } else if (syncData.type === 'SCORE_UPDATE') {
         setPlayerList(prev => prev.map(p => 
           p.peerId === connection.peer ? { ...p, score: syncData.pairsMatched || 0 } : p

@@ -9,7 +9,7 @@ interface LobbyProps {
 const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
   const [showJoinInput, setShowJoinInput] = useState(false);
   const [roomCode, setRoomCode] = useState('');
-  const [playerName, setPlayerName] = useState('');
+  const [playerName, setPlayerName] = useState(() => localStorage.getItem('gamejoke_player_name') || '');
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -24,6 +24,7 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
       return;
     }
     setLocalError(null);
+    localStorage.setItem('gamejoke_player_name', playerName.trim());
     onSelectMode(mode, playerName.trim(), code);
   };
 
@@ -33,6 +34,12 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
       return;
     }
     validateAndSelect('multiplayer', roomCode.trim());
+  };
+
+  const handleRoomCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.toUpperCase();
+    setRoomCode(val);
+    if (localError) setLocalError(null); // Clear error when typing
   };
 
   return (
@@ -51,7 +58,10 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
             placeholder="اكتب اسمك هنا..." 
             className="name-input"
             value={playerName}
-            onChange={(e) => setPlayerName(e.target.value)}
+            onChange={(e) => {
+              setPlayerName(e.target.value);
+              if (localError) setLocalError(null);
+            }}
             maxLength={15}
           />
         </div>
@@ -82,7 +92,7 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
               placeholder="أدخل كود الغرفة" 
               className="room-input"
               value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+              onChange={handleRoomCodeChange}
               maxLength={8}
             />
             <div className="join-actions">

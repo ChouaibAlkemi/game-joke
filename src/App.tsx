@@ -158,7 +158,6 @@ function App() {
               <div className={`status-dot ${status}`}></div>
             </div>
           )}
-          <span className="deploy-status">جاري التجهيز...</span>
         </div>
       </header>
 
