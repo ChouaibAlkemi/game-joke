@@ -25,6 +25,7 @@ interface CardType {
   type: 'normal' | 'bomb' | 'shuffle' | 'x3';
   isFlipped: boolean;
   isMatched: boolean;
+  isHidden: boolean; // For disappearing traps
 }
 
 function App() {
@@ -39,8 +40,8 @@ function App() {
   const [pairsMatched, setPairsMatched] = useState(0);
   const [lockBoard, setLockBoard] = useState(false);
   const [showWinner, setShowWinner] = useState(false);
-  const [matchCountRequired, setMatchCountRequired] = useState(2);
 
+  // Hook handles identity, sync, and Heartbeat
   const { 
     playerList, 
     status, 
@@ -54,18 +55,13 @@ function App() {
   } = useMultiplayer(
     selectedRoom, 
     playerName,
-    (remoteBoard) => {
-      setCards(remoteBoard);
-      // Determine match mode from board content
-      const firstNormal = remoteBoard.find(c => c.type === 'normal')?.content;
-      const count = remoteBoard.filter(c => c.content === firstNormal).length;
-      setMatchCountRequired(count);
-    },
+    (remoteBoard) => setCards(remoteBoard),
     isConnectionActive
   );
 
+  const me = useMemo(() => playerList.find(p => p.id === myId), [playerList, myId]);
   const totalPossibleMatches = useMemo(() => CARD_IMAGES.length, []);
-
+  
   const isAllFinished = useMemo(() => {
     return playerList.length > 0 && playerList.every(p => p.isFinished);
   }, [playerList]);
@@ -79,12 +75,12 @@ function App() {
     })[0].id;
   }, [playerList]);
 
-  const initializeBoard = useCallback((matchCount: number) => {
+  const initializeBoard = useCallback(() => {
     let cardPool: any[] = [];
     
-    // Add normal character cards
+    // Always generate 3 instances of characters to support individual X3 challenge
     CARD_IMAGES.forEach(content => {
-      for (let i = 0; i < matchCount; i++) {
+      for (let i = 0; i < 3; i++) {
         cardPool.push({ content, type: 'normal' });
       }
     });
@@ -101,6 +97,7 @@ function App() {
         id: index,
         isFlipped: false,
         isMatched: false,
+        isHidden: false,
       }));
     
     setCards(shuffledBoard);
@@ -109,30 +106,32 @@ function App() {
     setMoves(0);
     setLockBoard(false);
     setShowWinner(false);
-    setMatchCountRequired(matchCount);
 
-    if (gameMode === 'multiplayer' && (!selectedRoom || playerList.find(p => p.id === myId)?.isHost)) {
+    if (gameMode === 'multiplayer' && (!selectedRoom || me?.isHost)) {
       broadcastBoard(shuffledBoard);
     }
-  }, [gameMode, selectedRoom, playerList, myId, broadcastBoard]);
+  }, [gameMode, selectedRoom, me, broadcastBoard]);
 
   const handleRestart = () => {
     if (gameMode === 'multiplayer') broadcastRestart();
-    initializeBoard(2); // Start normal
+    updateMyState({ matchCountRequired: 2, score: 0, isFinished: false });
+    initializeBoard();
   };
 
   useEffect(() => {
-    const onRemoteRestart = () => initializeBoard(2);
+    const onRemoteRestart = () => {
+      updateMyState({ matchCountRequired: 2, score: 0, isFinished: false });
+      initializeBoard();
+    };
     window.addEventListener('gamejoke_restart', onRemoteRestart);
     return () => window.removeEventListener('gamejoke_restart', onRemoteRestart);
-  }, [initializeBoard]);
+  }, [initializeBoard, updateMyState]);
 
   const handleExit = () => {
     setGameMode('lobby');
     setSelectedRoom(undefined);
     setIsConnectionActive(false);
     setCards([]);
-    setPairsMatched(0);
   };
 
   useEffect(() => {
@@ -143,8 +142,8 @@ function App() {
   }, [status, gameMode, isConnectionActive]);
 
   useEffect(() => {
-    if (gameMode !== 'lobby') initializeBoard(2);
-  }, [gameMode]); // Removed initializeBoard to prevent loop, first run only
+    if (gameMode !== 'lobby') initializeBoard();
+  }, [gameMode]);
 
   useEffect(() => {
     if (gameMode === 'multiplayer') {
@@ -162,51 +161,60 @@ function App() {
 
   const handleCardClick = (id: number) => {
     if (lockBoard || flippedCards.includes(id)) return;
-    
-    const me = playerList.find(p => p.id === myId);
     if (gameMode === 'multiplayer' && me?.isFinished) return;
 
     const clickedCard = cards.find(c => c.id === id);
-    if (!clickedCard) return;
+    if (!clickedCard || clickedCard.isHidden) return;
 
-    // 1. Flip the card visually
-    setCards(prev => prev.map(card => card.id === id ? { ...card, isFlipped: true } : card));
+    const myMatchReq = me?.matchCountRequired || 2;
 
-    // 2. Handle Special Effects Immediately
-    if (clickedCard.type === 'bomb') {
+    // Flip visually
+    const updatedCards = cards.map(card => card.id === id ? { ...card, isFlipped: true } : card);
+    setCards(updatedCards);
+
+    // Trap handling
+    if (clickedCard.type !== 'normal') {
       setLockBoard(true);
       setTimeout(() => {
-        setPairsMatched(0);
-        setCards(prev => prev.map(c => ({ ...c, isMatched: false, isFlipped: false })));
-        setFlippedCards([]);
+        // Mark the trap as hidden for everyone
+        const finalCards = updatedCards.map(c => {
+          if (c.id === id) return { ...c, isHidden: true, isFlipped: true };
+          if (clickedCard.type === 'bomb' || clickedCard.type === 'shuffle') {
+            // Bomb/Shuffle: Hide all matched character cards again
+            return { ...c, isMatched: false, isFlipped: false };
+          }
+          return c;
+        });
+
+        if (clickedCard.type === 'bomb' || clickedCard.type === 'shuffle') {
+          setPairsMatched(0);
+        }
+
+        if (clickedCard.type === 'x3') {
+          updateMyState({ matchCountRequired: 3 });
+        }
+
+        if (clickedCard.type === 'shuffle') {
+           // Reshuffle positions only for HIDDEN or UNMATCHED cards? 
+           // User says "تعيد ترتيب كل الصور" -> Shuffle all remaining
+           const specials = finalCards.filter(c => c.type !== 'normal');
+           const normals = finalCards.filter(c => c.type === 'normal').sort(() => Math.random() - 0.5);
+           setCards([...specials, ...normals].sort(() => Math.random() - 0.5));
+        } else {
+           setCards(finalCards);
+        }
+        
+        if (gameMode === 'multiplayer') broadcastBoard(finalCards);
         setLockBoard(false);
-      }, 1000);
+      }, 800);
       return;
     }
 
-    if (clickedCard.type === 'shuffle') {
-      setLockBoard(true);
-      setTimeout(() => {
-        setPairsMatched(0);
-        const currentMatchReq = matchCountRequired;
-        initializeBoard(currentMatchReq);
-      }, 1000);
-      return;
-    }
-
-    if (clickedCard.type === 'x3') {
-      setLockBoard(true);
-      setTimeout(() => {
-        initializeBoard(3); // Enter Triple Mode
-      }, 1000);
-      return;
-    }
-
-    // 3. Handle Normal Logic
+    // Normal match logic
     const newFlippedCards = [...flippedCards, id];
     setFlippedCards(newFlippedCards);
 
-    if (newFlippedCards.length === matchCountRequired) {
+    if (newFlippedCards.length === myMatchReq) {
       setMoves(prev => prev + 1);
       setLockBoard(true);
       checkForMatch(newFlippedCards);
@@ -220,12 +228,14 @@ function App() {
 
     if (allMatch) {
       setTimeout(() => {
-        setCards(prev => prev.map(card => 
+        const newCards = cards.map(card => 
           currentFlipped.includes(card.id) ? { ...card, isMatched: true } : card
-        ));
+        );
+        setCards(newCards);
         setPairsMatched(prev => prev + 1);
         setFlippedCards([]);
         setLockBoard(false);
+        if (gameMode === 'multiplayer') broadcastBoard(newCards);
       }, 600);
     } else {
       setTimeout(() => {
@@ -262,8 +272,6 @@ function App() {
     );
   }
 
-  const me = playerList.find(p => p.id === myId);
-
   return (
     <div className="game-container fade-in">
       <header className="game-header">
@@ -272,7 +280,9 @@ function App() {
             <img src="/LOGO.png" alt="Logo" />
           </div>
           <h1>لعبة الذاكرة المطورة</h1>
-          <p className="subtitle">{matchCountRequired === 3 ? '⚡ وضع الثلاثي مفعل ⚡' : 'وضع التحدي الذكي'}</p>
+          <p className="subtitle">
+            {me?.matchCountRequired === 3 ? '⚡ وضع الثلاثي (تحتاج 3 كروت) ⚡' : 'وضع التحدي (تحتاج زوجين)'}
+          </p>
         </div>
         <div className="header-left">
           <button className="btn btn-exit" onClick={handleExit}>خروج ←</button>
@@ -298,37 +308,38 @@ function App() {
             <div className="winner-overlay">
               <div className="winner-card">
                 <h2>{me?.isFinished && !isAllFinished ? 'أنهيت مهمتك! 👏' : 'انتهى التحدي الكبير! 🎉'}</h2>
-                <p>النقاط: {pairsMatched} / {totalPossibleMatches}</p>
+                <div className={`leader-indicator ${leaderId === myId ? 'is-winner' : ''}`}>
+                   {leaderId === myId ? 'أنت البطل الحالي! 👑' : 'المركز النهائي'}
+                </div>
                 {gameMode === 'multiplayer' && !isAllFinished && (
-                  <p className="waiting-msg pulse">بانتظار المتحدين الآخرين...</p>
+                  <p className="waiting-msg pulse">بانتظار المتحدين الآخرين لإنهاء الجولة...</p>
                 )}
                 {isAllFinished && (
                    <div className="final-ranking">
-                      <h3>الترتيب الختامي:</h3>
                       <div className="ranking-list">
                          {playerList.sort((a,b) => b.score - a.score).map((p, idx) => (
                            <div key={p.id} className="rank-item">
                               <span>#{idx + 1} {p.name} {p.id === leaderId ? '👑' : ''}</span>
-                              <span>{p.score} نجاح</span>
+                              <span>{p.score} نقطة</span>
                            </div>
                          ))}
                       </div>
                       {(!selectedRoom || (me && me.isHost)) && (
-                        <button className="btn btn-primary" onClick={handleRestart}>تحدي جديد للكل</button>
+                        <button className="btn btn-primary" onClick={handleRestart}>جولة جديدة للكل</button>
                       )}
                    </div>
                 )}
                 {(gameMode === 'solo' || (isAllFinished && selectedRoom && me && !me.isHost)) && (
-                  <button className="btn btn-primary" onClick={() => initializeBoard(2)}>لعب جديد</button>
+                  <button className="btn btn-primary" onClick={initializeBoard}>لعب جديد</button>
                 )}
               </div>
             </div>
           )}
 
-          <div className={`card-grid pairs-${totalPossibleMatches} ${matchCountRequired === 3 ? 'triple-mode' : ''} ${me?.isFinished ? 'dimmed' : ''}`}>
+          <div className={`card-grid size-${cards.length} ${me?.isFinished ? 'dimmed' : ''}`}>
             {cards.map(card => (
               <Card 
-                key={`${card.id}-${matchCountRequired}`}
+                key={`${card.id}`}
                 {...card}
                 onClick={handleCardClick}
               />
@@ -349,24 +360,45 @@ function App() {
       </div>
 
       <style>{`
-        .game-container { max-width: 1100px; margin: 0 auto; padding: 20px; direction: rtl; }
+        .game-container { max-width: 1200px; margin: 0 auto; padding: 20px; direction: rtl; }
         .game-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
         .subtitle { color: var(--accent); font-weight: bold; font-size: 14px; margin-top: 5px; }
         .game-layout { display: flex; gap: 20px; flex-wrap: wrap; }
         .game-main { flex: 2; min-width: 320px; position: relative; }
         .game-sidebar { flex: 1; min-width: 250px; }
-        .card-grid { display: grid; gap: 12px; margin-bottom: 24px; transition: 0.5s; grid-template-columns: repeat(4, 1fr); }
-        .card-grid.triple-mode { gap: 8px; grid-template-columns: repeat(6, 1fr); }
-        .card-grid.dimmed { opacity: 0.3; pointer-events: none; }
-        .winner-overlay { position: absolute; inset: 0; background: rgba(13, 17, 23, 0.95); z-index: 100; display: flex; align-items: center; justify-content: center; border-radius: 12px; }
-        .winner-card { background: #1c2128; padding: 30px; border-radius: 16px; border: 2px solid var(--accent); text-align: center; width: 90%; max-width: 400px; }
-        .rank-item { display: flex; justify-content: space-between; padding: 10px; background: #0d1117; border-radius: 8px; margin-bottom: 5px; }
-        .btn { border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-        .btn-primary { background: var(--accent); color: #000; }
+        
+        .card-grid { 
+          display: grid; 
+          gap: 12px; 
+          margin-bottom: 24px; 
+          transition: 0.5s; 
+          grid-template-columns: repeat(4, 1fr); 
+        }
+        
+        @media (min-width: 900px) {
+          .card-grid.size-18 { grid-template-columns: repeat(6, 1fr); }
+        }
+
+        .card-grid.dimmed { opacity: 0.2; pointer-events: none; }
+        
+        .winner-overlay { position: absolute; inset: 0; background: rgba(13, 17, 23, 0.98); z-index: 100; display: flex; align-items: center; justify-content: center; border-radius: 12px; }
+        .winner-card { background: #1c2128; padding: 40px; border-radius: 20px; border: 2px solid var(--accent); text-align: center; width: 95%; max-width: 450px; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
+        .leader-indicator { margin-bottom: 20px; font-size: 18px; font-weight: 800; color: var(--text-secondary); }
+        .leader-indicator.is-winner { color: var(--accent); }
+        
+        .rank-item { display: flex; justify-content: space-between; padding: 12px; background: #0d1117; border-radius: 10px; margin-bottom: 8px; border: 1px solid #30363d; }
+        .btn { border: none; padding: 12px 24px; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 16px; transition: 0.3s; }
+        .btn-primary { background: var(--accent); color: #000; box-shadow: 0 4px 15px rgba(0, 215, 192, 0.3); }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 215, 192, 0.4); }
         .btn-secondary { background: #30363d; color: #fff; }
+        
+        .waiting-msg { color: var(--accent); margin: 20px 0; font-weight: 700; }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        
         @media (max-width: 600px) { 
-           .card-grid { grid-template-columns: repeat(3, 1fr); } 
-           .card-grid.triple-mode { grid-template-columns: repeat(3, 1fr); }
+           .card-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; } 
+           .game-container { padding: 10px; }
         }
       `}</style>
     </div>

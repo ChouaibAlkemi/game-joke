@@ -12,8 +12,9 @@ export interface Player {
   score: number;
   isHost: boolean;
   isFinished: boolean;
+  matchCountRequired: number; // New: individual difficulty
   finishTime?: number;
-  lastSeen?: number; // timestamp for heartbeat
+  lastSeen?: number;
 }
 
 interface GameState {
@@ -93,6 +94,7 @@ export const useMultiplayer = (
       score: 0,
       isHost: host,
       isFinished: false,
+      matchCountRequired: 2,
       lastSeen: Date.now()
     };
     playerStateRef.current = me;

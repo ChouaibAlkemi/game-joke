@@ -6,14 +6,15 @@ interface CardProps {
   type: 'normal' | 'bomb' | 'shuffle' | 'x3';
   isFlipped: boolean;
   isMatched: boolean;
+  isHidden: boolean;
   onClick: (id: number) => void;
 }
 
-const Card: React.FC<CardProps> = ({ id, content, type, isFlipped, isMatched, onClick }) => {
+const Card: React.FC<CardProps> = ({ id, content, type, isFlipped, isMatched, isHidden, onClick }) => {
   return (
     <div 
-      className={`card-wrapper ${isFlipped ? 'flipped' : ''} ${isMatched ? 'matched' : ''} type-${type}`}
-      onClick={() => !isFlipped && !isMatched && onClick(id)}
+      className={`card-wrapper ${isFlipped ? 'flipped' : ''} ${isMatched ? 'matched' : ''} ${isHidden ? 'is-hidden' : ''} type-${type}`}
+      onClick={() => !isFlipped && !isMatched && !isHidden && onClick(id)}
     >
       <div className="card-inner">
         <div className="card-front">
@@ -43,6 +44,13 @@ const Card: React.FC<CardProps> = ({ id, content, type, isFlipped, isMatched, on
 
         .card-wrapper:hover:not(.flipped):not(.matched) {
           transform: translateY(-4px);
+        }
+
+        .card-wrapper.is-hidden {
+          visibility: hidden;
+          opacity: 0;
+          pointer-events: none;
+          transition: 0.5s;
         }
 
         .card-inner {
