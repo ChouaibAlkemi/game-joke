@@ -5,7 +5,6 @@ import Lobby from './components/Lobby';
 import PlayerList from './components/PlayerList';
 import { useMultiplayer } from './hooks/useMultiplayer';
 
-// Character images from the public/cards folder
 const CARD_IMAGES = [
   '/cards/C1.png',
   '/cards/C2.png',
@@ -14,11 +13,16 @@ const CARD_IMAGES = [
   '/cards/C5.png',
 ];
 
-const TOTAL_PAIRS = CARD_IMAGES.length;
+const SPECIAL_CARDS = [
+  { content: '💣', type: 'bomb' },
+  { content: '🔄', type: 'shuffle' },
+  { content: '⚡', type: 'x3' },
+];
 
 interface CardType {
   id: number;
   content: string;
+  type: 'normal' | 'bomb' | 'shuffle' | 'x3';
   isFlipped: boolean;
   isMatched: boolean;
 }
@@ -35,6 +39,7 @@ function App() {
   const [pairsMatched, setPairsMatched] = useState(0);
   const [lockBoard, setLockBoard] = useState(false);
   const [showWinner, setShowWinner] = useState(false);
+  const [matchCountRequired, setMatchCountRequired] = useState(2);
 
   const { 
     playerList, 
@@ -51,9 +56,15 @@ function App() {
     playerName,
     (remoteBoard) => {
       setCards(remoteBoard);
+      // Determine match mode from board content
+      const firstNormal = remoteBoard.find(c => c.type === 'normal')?.content;
+      const count = remoteBoard.filter(c => c.content === firstNormal).length;
+      setMatchCountRequired(count);
     },
     isConnectionActive
   );
+
+  const totalPossibleMatches = useMemo(() => CARD_IMAGES.length, []);
 
   const isAllFinished = useMemo(() => {
     return playerList.length > 0 && playerList.every(p => p.isFinished);
@@ -63,48 +74,58 @@ function App() {
     if (playerList.length === 0) return null;
     return [...playerList].sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      // Tie breaker: who finished first?
       if (a.isFinished && b.isFinished) return (a.finishTime || 0) - (b.finishTime || 0);
       return 0;
     })[0].id;
   }, [playerList]);
 
-  const initializeGame = useCallback(() => {
-    const cardPool = [...CARD_IMAGES, ...CARD_IMAGES]
+  const initializeBoard = useCallback((matchCount: number) => {
+    let cardPool: any[] = [];
+    
+    // Add normal character cards
+    CARD_IMAGES.forEach(content => {
+      for (let i = 0; i < matchCount; i++) {
+        cardPool.push({ content, type: 'normal' });
+      }
+    });
+
+    // Add special trap cards
+    SPECIAL_CARDS.forEach(special => {
+      cardPool.push(special);
+    });
+
+    const shuffledBoard = cardPool
       .sort(() => Math.random() - 0.5)
-      .map((content, index) => ({
+      .map((item, index) => ({
+        ...item,
         id: index,
-        content,
         isFlipped: false,
         isMatched: false,
       }));
     
-    setCards(cardPool);
+    setCards(shuffledBoard);
     setFlippedCards([]);
-    setMoves(0);
     setPairsMatched(0);
+    setMoves(0);
     setLockBoard(false);
     setShowWinner(false);
+    setMatchCountRequired(matchCount);
 
-    if (gameMode === 'multiplayer' && !selectedRoom) {
-      broadcastBoard(cardPool);
+    if (gameMode === 'multiplayer' && (!selectedRoom || playerList.find(p => p.id === myId)?.isHost)) {
+      broadcastBoard(shuffledBoard);
     }
-  }, [gameMode, selectedRoom, broadcastBoard]);
+  }, [gameMode, selectedRoom, playerList, myId, broadcastBoard]);
 
   const handleRestart = () => {
-    if (gameMode === 'multiplayer') {
-      broadcastRestart();
-    }
-    initializeGame();
+    if (gameMode === 'multiplayer') broadcastRestart();
+    initializeBoard(2); // Start normal
   };
 
   useEffect(() => {
-    const onRemoteRestart = () => {
-      initializeGame();
-    };
+    const onRemoteRestart = () => initializeBoard(2);
     window.addEventListener('gamejoke_restart', onRemoteRestart);
     return () => window.removeEventListener('gamejoke_restart', onRemoteRestart);
-  }, [initializeGame]);
+  }, [initializeBoard]);
 
   const handleExit = () => {
     setGameMode('lobby');
@@ -112,75 +133,99 @@ function App() {
     setIsConnectionActive(false);
     setCards([]);
     setPairsMatched(0);
-    setMoves(0);
   };
 
   useEffect(() => {
     if (!isConnectionActive || gameMode !== 'lobby') return;
     if (status === 'CONNECTED') {
-      const timer = setTimeout(() => {
-        setGameMode('multiplayer');
-      }, 500);
-      return () => clearTimeout(timer);
+      setTimeout(() => setGameMode('multiplayer'), 500);
     }
   }, [status, gameMode, isConnectionActive]);
 
   useEffect(() => {
-    if (gameMode !== 'lobby') {
-      initializeGame();
-    }
-  }, [gameMode, initializeGame]);
+    if (gameMode !== 'lobby') initializeBoard(2);
+  }, [gameMode]); // Removed initializeBoard to prevent loop, first run only
 
   useEffect(() => {
     if (gameMode === 'multiplayer') {
-      const amIFinished = pairsMatched === TOTAL_PAIRS && TOTAL_PAIRS > 0;
+      const amIFinished = pairsMatched === totalPossibleMatches && totalPossibleMatches > 0;
       updateMyState({ 
         score: pairsMatched, 
         isFinished: amIFinished,
         finishTime: amIFinished ? Date.now() : undefined
       });
     }
-    
-    if (pairsMatched === TOTAL_PAIRS && TOTAL_PAIRS > 0) {
+    if (pairsMatched === totalPossibleMatches && totalPossibleMatches > 0) {
       setShowWinner(true);
     }
-  }, [pairsMatched, gameMode, updateMyState]);
+  }, [pairsMatched, gameMode, updateMyState, totalPossibleMatches]);
 
   const handleCardClick = (id: number) => {
-    // Basic guards
     if (lockBoard || flippedCards.includes(id)) return;
     
-    // Check if player is already finished in multiplayer
     const me = playerList.find(p => p.id === myId);
     if (gameMode === 'multiplayer' && me?.isFinished) return;
 
+    const clickedCard = cards.find(c => c.id === id);
+    if (!clickedCard) return;
+
+    // 1. Flip the card visually
+    setCards(prev => prev.map(card => card.id === id ? { ...card, isFlipped: true } : card));
+
+    // 2. Handle Special Effects Immediately
+    if (clickedCard.type === 'bomb') {
+      setLockBoard(true);
+      setTimeout(() => {
+        setPairsMatched(0);
+        setCards(prev => prev.map(c => ({ ...c, isMatched: false, isFlipped: false })));
+        setFlippedCards([]);
+        setLockBoard(false);
+      }, 1000);
+      return;
+    }
+
+    if (clickedCard.type === 'shuffle') {
+      setLockBoard(true);
+      setTimeout(() => {
+        setPairsMatched(0);
+        const currentMatchReq = matchCountRequired;
+        initializeBoard(currentMatchReq);
+      }, 1000);
+      return;
+    }
+
+    if (clickedCard.type === 'x3') {
+      setLockBoard(true);
+      setTimeout(() => {
+        initializeBoard(3); // Enter Triple Mode
+      }, 1000);
+      return;
+    }
+
+    // 3. Handle Normal Logic
     const newFlippedCards = [...flippedCards, id];
     setFlippedCards(newFlippedCards);
 
-    setCards(prev => prev.map(card => 
-      card.id === id ? { ...card, isFlipped: true } : card
-    ));
-
-    if (newFlippedCards.length === 2) {
+    if (newFlippedCards.length === matchCountRequired) {
       setMoves(prev => prev + 1);
-      setLockBoard(true); // LOCK IMMEDIATELY
+      setLockBoard(true);
       checkForMatch(newFlippedCards);
     }
   };
 
   const checkForMatch = (currentFlipped: number[]) => {
-    const [id1, id2] = currentFlipped;
-    const card1 = cards.find(c => c.id === id1);
-    const card2 = cards.find(c => c.id === id2);
+    const flippedObjects = currentFlipped.map(id => cards.find(c => c.id === id));
+    const firstContent = flippedObjects[0]?.content;
+    const allMatch = flippedObjects.every(c => c?.content === firstContent);
 
-    if (card1?.content === card2?.content) {
+    if (allMatch) {
       setTimeout(() => {
         setCards(prev => prev.map(card => 
           currentFlipped.includes(card.id) ? { ...card, isMatched: true } : card
         ));
         setPairsMatched(prev => prev + 1);
         setFlippedCards([]);
-        setLockBoard(false); // UNLOCK
+        setLockBoard(false);
       }, 600);
     } else {
       setTimeout(() => {
@@ -188,7 +233,7 @@ function App() {
           currentFlipped.includes(card.id) ? { ...card, isFlipped: false } : card
         ));
         setFlippedCards([]);
-        setLockBoard(false); // UNLOCK
+        setLockBoard(false);
       }, 1000);
     }
   };
@@ -226,21 +271,14 @@ function App() {
           <div className="logo-mini">
             <img src="/LOGO.png" alt="Logo" />
           </div>
-          <h1>استمتع باللعب أثناء الانتظار</h1>
-          <p className="subtitle">الألعاب</p>
-          <nav className="game-menu">
-            <div className="menu-item active">
-              <span className="dot"></span>
-              طابق الأزواج
-              <span className="icon">◈</span>
-            </div>
-          </nav>
+          <h1>لعبة الذاكرة المطورة</h1>
+          <p className="subtitle">{matchCountRequired === 3 ? '⚡ وضع الثلاثي مفعل ⚡' : 'وضع التحدي الذكي'}</p>
         </div>
         <div className="header-left">
           <button className="btn btn-exit" onClick={handleExit}>خروج ←</button>
           {gameMode === 'multiplayer' && (
             <div className="room-info">
-              <span className="label">كود الغرفة:</span>
+              <span className="label">الغرفة:</span>
               <span className="code">{generatedCode || selectedRoom}</span>
               <div className={`status-dot ${status}`}></div>
             </div>
@@ -252,45 +290,45 @@ function App() {
         <main className="game-main">
           <Stats 
             pairsMatched={pairsMatched} 
-            totalPairs={TOTAL_PAIRS} 
+            totalPairs={totalPossibleMatches} 
             moves={moves}
           />
 
           {showWinner && (
             <div className="winner-overlay">
               <div className="winner-card">
-                <h2>{me?.isFinished && !isAllFinished ? 'لقد أنهيت اللعبة! 👏' : 'تم انتهاء التحدي! 🎉'}</h2>
-                <p>السكور الخاص بك: {pairsMatched}</p>
+                <h2>{me?.isFinished && !isAllFinished ? 'أنهيت مهمتك! 👏' : 'انتهى التحدي الكبير! 🎉'}</h2>
+                <p>النقاط: {pairsMatched} / {totalPossibleMatches}</p>
                 {gameMode === 'multiplayer' && !isAllFinished && (
-                  <p className="waiting-msg pulse">بانتظار بقية اللاعبين لإنهاء الجولة...</p>
+                  <p className="waiting-msg pulse">بانتظار المتحدين الآخرين...</p>
                 )}
                 {isAllFinished && (
                    <div className="final-ranking">
-                      <h3>الترتيب النهائي:</h3>
+                      <h3>الترتيب الختامي:</h3>
                       <div className="ranking-list">
                          {playerList.sort((a,b) => b.score - a.score).map((p, idx) => (
                            <div key={p.id} className="rank-item">
-                              <span>#{idx + 1} {p.name}</span>
-                              <span>{p.score} نقطة {p.id === leaderId ? '👑' : ''}</span>
+                              <span>#{idx + 1} {p.name} {p.id === leaderId ? '👑' : ''}</span>
+                              <span>{p.score} نجاح</span>
                            </div>
                          ))}
                       </div>
                       {(!selectedRoom || (me && me.isHost)) && (
-                        <button className="btn btn-primary" onClick={handleRestart}>العب مرة أخرى للجميع</button>
+                        <button className="btn btn-primary" onClick={handleRestart}>تحدي جديد للكل</button>
                       )}
                    </div>
                 )}
-                {gameMode === 'solo' && (
-                  <button className="btn btn-primary" onClick={initializeGame}>العب مرة أخرى</button>
+                {(gameMode === 'solo' || (isAllFinished && selectedRoom && me && !me.isHost)) && (
+                  <button className="btn btn-primary" onClick={() => initializeBoard(2)}>لعب جديد</button>
                 )}
               </div>
             </div>
           )}
 
-          <div className={`card-grid pairs-${TOTAL_PAIRS} ${me?.isFinished ? 'dimmed' : ''}`}>
+          <div className={`card-grid pairs-${totalPossibleMatches} ${matchCountRequired === 3 ? 'triple-mode' : ''} ${me?.isFinished ? 'dimmed' : ''}`}>
             {cards.map(card => (
               <Card 
-                key={card.id}
+                key={`${card.id}-${matchCountRequired}`}
                 {...card}
                 onClick={handleCardClick}
               />
@@ -298,8 +336,8 @@ function App() {
           </div>
 
           <div className="game-controls">
-            <button className="btn btn-primary" onClick={handleRestart}>إعادة التشغيل</button>
-            <button className="btn btn-secondary" onClick={handleExit}>العودة للرئيسية</button>
+            <button className="btn btn-primary" onClick={handleRestart}>إعادة الضبط</button>
+            <button className="btn btn-secondary" onClick={handleExit}>القائمة الرئيسية</button>
           </div>
         </main>
 
@@ -311,37 +349,25 @@ function App() {
       </div>
 
       <style>{`
-        .game-container { max-width: 1100px; margin: 0 auto; padding: 40px 20px; direction: rtl; }
-        .game-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
-        .header-left { display: flex; flex-direction: column; align-items: flex-end; gap: 15px; }
-        .logo-mini { width: 60px; height: auto; margin-bottom: 16px; }
-        .logo-mini img { width: 100%; height: auto; }
-        .game-layout { display: flex; gap: 30px; align-items: flex-start; }
-        .game-main { flex: 1; max-width: 640px; position: relative; }
-        .game-sidebar { width: 300px; position: sticky; top: 20px; }
-        .card-grid { display: grid; gap: 16px; margin-bottom: 32px; transition: 0.5s; }
-        .card-grid.dimmed { opacity: 0.3; filter: grayscale(1); pointer-events: none; }
-        .card-grid.pairs-5 { grid-template-columns: repeat(5, 1fr); }
-        .room-info { background-color: #1c2128; padding: 8px 16px; border-radius: 8px; display: flex; align-items: center; gap: 10px; border: 1px solid #30363d; }
-        .room-info .code { color: var(--accent); font-weight: 800; font-family: monospace; }
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
-        .status-dot.CONNECTED { background-color: #238636; box-shadow: 0 0 5px #238636; }
-        .status-dot.CONNECTING { background-color: #d29922; }
-        .status-dot.ERROR { background-color: #f85149; }
-        .btn { padding: 12px 24px; border-radius: 8px; font-weight: 700; cursor: pointer; border: none; transition: 0.2s; }
-        .btn-primary { background-color: var(--accent); color: #000; }
-        .btn-secondary { background-color: #30363d; color: var(--text-primary); }
-        .btn-exit { background-color: rgba(248, 81, 73, 0.1); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.2); padding: 6px 16px; font-size: 13px; }
-        .winner-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(13, 17, 23, 0.9); z-index: 10; display: flex; justify-content: center; align-items: center; border-radius: 12px; }
-        .winner-card { background-color: #1c2128; padding: 40px; border-radius: 16px; border: 2px solid var(--accent); text-align: center; max-width: 400px; width: 90%; }
-        .waiting-msg { color: var(--accent); margin-top: 15px; font-weight: 600; }
-        .final-ranking { margin-top: 25px; padding-top: 20px; border-top: 1px solid #30363d; }
-        .ranking-list { margin: 15px 0 25px; display: flex; flex-direction: column; gap: 10px; }
-        .rank-item { display: flex; justify-content: space-between; background: #0d1117; padding: 10px 15px; border-radius: 8px; }
-        .pulse { animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-        @media (max-width: 900px) { .game-layout { flex-direction: column; } .game-sidebar { width: 100%; position: static; } }
-        @media (max-width: 600px) { .card-grid.pairs-5 { grid-template-columns: repeat(2, 1fr); } }
+        .game-container { max-width: 1100px; margin: 0 auto; padding: 20px; direction: rtl; }
+        .game-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+        .subtitle { color: var(--accent); font-weight: bold; font-size: 14px; margin-top: 5px; }
+        .game-layout { display: flex; gap: 20px; flex-wrap: wrap; }
+        .game-main { flex: 2; min-width: 320px; position: relative; }
+        .game-sidebar { flex: 1; min-width: 250px; }
+        .card-grid { display: grid; gap: 12px; margin-bottom: 24px; transition: 0.5s; grid-template-columns: repeat(4, 1fr); }
+        .card-grid.triple-mode { gap: 8px; grid-template-columns: repeat(6, 1fr); }
+        .card-grid.dimmed { opacity: 0.3; pointer-events: none; }
+        .winner-overlay { position: absolute; inset: 0; background: rgba(13, 17, 23, 0.95); z-index: 100; display: flex; align-items: center; justify-content: center; border-radius: 12px; }
+        .winner-card { background: #1c2128; padding: 30px; border-radius: 16px; border: 2px solid var(--accent); text-align: center; width: 90%; max-width: 400px; }
+        .rank-item { display: flex; justify-content: space-between; padding: 10px; background: #0d1117; border-radius: 8px; margin-bottom: 5px; }
+        .btn { border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-primary { background: var(--accent); color: #000; }
+        .btn-secondary { background: #30363d; color: #fff; }
+        @media (max-width: 600px) { 
+           .card-grid { grid-template-columns: repeat(3, 1fr); } 
+           .card-grid.triple-mode { grid-template-columns: repeat(3, 1fr); }
+        }
       `}</style>
     </div>
   );

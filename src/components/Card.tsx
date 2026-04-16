@@ -2,16 +2,17 @@ import React from 'react';
 
 interface CardProps {
   id: number;
-  content: string; // This will now be the image URL
+  content: string;
+  type: 'normal' | 'bomb' | 'shuffle' | 'x3';
   isFlipped: boolean;
   isMatched: boolean;
   onClick: (id: number) => void;
 }
 
-const Card: React.FC<CardProps> = ({ id, content, isFlipped, isMatched, onClick }) => {
+const Card: React.FC<CardProps> = ({ id, content, type, isFlipped, isMatched, onClick }) => {
   return (
     <div 
-      className={`card-wrapper ${isFlipped ? 'flipped' : ''} ${isMatched ? 'matched' : ''}`}
+      className={`card-wrapper ${isFlipped ? 'flipped' : ''} ${isMatched ? 'matched' : ''} type-${type}`}
       onClick={() => !isFlipped && !isMatched && onClick(id)}
     >
       <div className="card-inner">
@@ -24,7 +25,11 @@ const Card: React.FC<CardProps> = ({ id, content, isFlipped, isMatched, onClick 
           </div>
         </div>
         <div className="card-back">
-          <img src={content} alt="Card Character" className="card-image" />
+          {type === 'normal' ? (
+            <img src={content} alt="Card Character" className="card-image" />
+          ) : (
+            <div className={`special-icon icon-${type}`}>{content}</div>
+          )}
         </div>
       </div>
 
@@ -81,11 +86,31 @@ const Card: React.FC<CardProps> = ({ id, content, isFlipped, isMatched, onClick 
         }
 
         .card-back {
-          background-color: rgba(22, 27, 34, 0.5); /* Semi-transparent background */
+          background-color: rgba(22, 27, 34, 0.5);
           color: var(--accent);
           transform: rotateY(180deg);
           border: 2px solid var(--accent);
           overflow: hidden;
+        }
+
+        /* Special Card Styles */
+        .type-bomb .card-back { background-color: #440000; border-color: #f85149; }
+        .type-shuffle .card-back { background-color: #002244; border-color: #388bfd; }
+        .type-x3 .card-back { background-color: #443300; border-color: #d29922; }
+
+        .special-icon {
+          font-size: 48px;
+          filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.3));
+          animation: bounce 2s infinite;
+        }
+
+        .icon-bomb { color: #f85149; }
+        .icon-shuffle { color: #388bfd; }
+        .icon-x3 { color: #d29922; }
+
+        @keyframes bounce {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.1); }
         }
 
         .card-image {
