@@ -367,6 +367,9 @@ function App() {
         .game-main { flex: 2; min-width: 320px; position: relative; }
         .game-sidebar { flex: 1; min-width: 250px; }
         
+        .logo-mini { width: 50px; height: auto; margin-bottom: 10px; }
+        .logo-mini img { width: 100%; height: auto; filter: drop-shadow(0 0 5px var(--accent-muted)); }
+        
         .card-grid { 
           display: grid; 
           gap: 12px; 

@@ -176,7 +176,7 @@ const Lobby: React.FC<LobbyProps> = ({
         }
 
         .logo-wrapper { margin-bottom: 30px; }
-        .main-logo { max-width: 200px; height: auto; filter: drop-shadow(0 0 15px var(--accent-muted)); }
+        .main-logo { width: 100%; max-width: 180px; height: auto; filter: drop-shadow(0 0 15px var(--accent-muted)); }
         .lobby-title { font-size: 24px; margin-bottom: 40px; color: var(--text-primary); }
         .name-section { margin-bottom: 32px; text-align: right; }
         .input-label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 14px; }
