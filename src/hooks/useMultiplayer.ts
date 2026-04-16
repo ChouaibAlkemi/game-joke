@@ -84,7 +84,7 @@ export const useMultiplayer = (
 
     const peerId = host ? ROOM_PREFIX + finalCode : undefined;
     
-    const newPeer = new Peer(peerId, {
+    const peerOptions = {
       debug: 2,
       config: {
         'iceServers': [
@@ -93,7 +93,9 @@ export const useMultiplayer = (
           { urls: 'stun:stun2.l.google.com:19302' }
         ]
       }
-    });
+    };
+
+    const newPeer = peerId ? new Peer(peerId, peerOptions) : new Peer(peerOptions);
     
     newPeer.on('open', (id) => {
       addLog(`تم الاتصال بالخادم. هويتك: ${id}`);
