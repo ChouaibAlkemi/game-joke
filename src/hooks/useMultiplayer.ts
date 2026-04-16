@@ -84,19 +84,27 @@ export const useMultiplayer = (
     let finalCode = roomCode ? roomCode.trim().toUpperCase() : generateCode();
     setGeneratedCode(finalCode);
 
-    addLog(host ? `محاولة فتح غرفة: ${finalCode}` : `انضمام للغرفة: ${finalCode}`);
+    addLog(host ? `جاري محاولة فتح غرفة: ${finalCode}` : `جاري محاولة الانضمام للغرفة: ${finalCode}`);
     setDetailedStatus(host ? 'جاري الاتصال بخادم الألعاب...' : 'جاري البحث عن الغرفة...');
 
-    // If we had too many collisions, fallback to random ID
     const peerId = (host && collisionCountRef.current < 2) ? ROOM_PREFIX + finalCode : undefined;
-    if (host && collisionCountRef.current >= 2) {
-      addLog('!! استخدام هوية عشوائية لتجاوز الازدحام');
-    }
 
-    // SIMPLIFIED CONFIG: Remove custom STUN to avoid malformed config issues
+    // ADVANCED ICE CONFIGURATION
     const peerOptions = {
       debug: 2,
-      secure: true // Force secure connection
+      secure: true,
+      config: {
+        'iceServers': [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
+          { urls: 'stun:stun.cloudflare.com:3478' },
+          { urls: 'stun:stun.services.mozilla.com' }
+        ],
+        'iceCandidatePoolSize': 10
+      }
     };
 
     const newPeer = peerId ? new Peer(peerId, peerOptions) : new Peer(peerOptions);
@@ -131,15 +139,11 @@ export const useMultiplayer = (
 
       if (err.type === 'peer-unavailable') {
         setErrorMsg('الغرفة غير موجودة. تأكد من الكود.');
-        setDetailedStatus('فشل في الوصول للغرفة');
         setStatus('ERROR');
       } else if (err.type === 'unavailable-id' && host) {
         addLog('الكود محجوز. جاري التغيير...');
         collisionCountRef.current++;
         setTimeout(() => setRetryTrigger(prev => prev + 1), 1000);
-      } else if (err.type === 'network') {
-        setErrorMsg('مشكلة في الشبكة. تأكد من اتصال الإنترنت.');
-        setStatus('ERROR');
       } else {
         setErrorMsg(`خطأ: ${err.type}`);
         setStatus('ERROR');
@@ -148,6 +152,7 @@ export const useMultiplayer = (
 
     newPeer.on('connection', (connection) => {
       if (isDestroyed) return;
+      addLog(`محاولة ربط واردة: ${connection.peer}`);
       setupConnection(connection);
     });
 
@@ -164,29 +169,30 @@ export const useMultiplayer = (
     if (!peerInstance || peerInstance.destroyed) return;
     
     setStatus('CONNECTING');
-    setDetailedStatus('جاري الربط مع المضيف...');
-    addLog(`طلب ربط مع: ${targetId}`);
+    setDetailedStatus('جاري محاولة اختراق جدار الحماية...');
+    addLog(`طلب ربط تقني مع: ${targetId}`);
     
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       if (status !== 'CONNECTED' && status !== 'ERROR') {
-        addLog('!! انتهت مهلة الانتظار');
-        setErrorMsg('فشل الربط التقني. قد يكون بسبب جدار حماية.');
+        addLog('!! فشل عبور جدار الحماية (Timeout)');
+        setErrorMsg('فشل الربط التقني. قد يكون بسبب حظر من مزود الإنترنت أو شبكة 4G.');
         setStatus('ERROR');
       }
-    }, 15000); // 15 seconds for reliability
+    }, 25000); // 25 seconds for network traversal
 
+    // Using reliable: true for data channel stability
     const connection = peerInstance.connect(targetId, { reliable: true });
     setupConnection(connection);
   };
 
   const setupConnection = (connection: DataConnection) => {
     connection.on('open', () => {
-      addLog(`✅ قناة البيانات جاهزة: ${connection.peer}`);
+      addLog(`✅ تم العبور بنجاح! متصل بـ: ${connection.peer}`);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       connectionsRef.current[connection.peer] = connection;
       setStatus('CONNECTED');
-      setDetailedStatus('متصل!');
+      setDetailedStatus('تم الاتصال! استعد...');
       setErrorMsg(null);
       startHeartbeat();
       
@@ -229,6 +235,11 @@ export const useMultiplayer = (
       addLog('!! قطع الاتصال');
       delete connectionsRef.current[connection.peer];
       setPlayerList(prev => prev.filter(p => p.peerId !== connection.peer));
+    });
+    
+    connection.on('error', (err) => {
+      addLog(`!! خطأ في قناة البيانات: ${err}`);
+      setStatus('ERROR');
     });
   };
 
