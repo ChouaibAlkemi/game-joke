@@ -147,7 +147,12 @@ function App() {
   }, [pairsMatched, gameMode, updateMyState]);
 
   const handleCardClick = (id: number) => {
-    if (lockBoard || flippedCards.includes(id) || (gameMode === 'multiplayer' && playerList.find(p => p.id === myId)?.isFinished)) return;
+    // Basic guards
+    if (lockBoard || flippedCards.includes(id)) return;
+    
+    // Check if player is already finished in multiplayer
+    const me = playerList.find(p => p.id === myId);
+    if (gameMode === 'multiplayer' && me?.isFinished) return;
 
     const newFlippedCards = [...flippedCards, id];
     setFlippedCards(newFlippedCards);
@@ -158,6 +163,7 @@ function App() {
 
     if (newFlippedCards.length === 2) {
       setMoves(prev => prev + 1);
+      setLockBoard(true); // LOCK IMMEDIATELY
       checkForMatch(newFlippedCards);
     }
   };
@@ -174,15 +180,15 @@ function App() {
         ));
         setPairsMatched(prev => prev + 1);
         setFlippedCards([]);
+        setLockBoard(false); // UNLOCK
       }, 600);
     } else {
-      setLockBoard(true);
       setTimeout(() => {
         setCards(prev => prev.map(card => 
           currentFlipped.includes(card.id) ? { ...card, isFlipped: false } : card
         ));
         setFlippedCards([]);
-        setLockBoard(false);
+        setLockBoard(false); // UNLOCK
       }, 1000);
     }
   };

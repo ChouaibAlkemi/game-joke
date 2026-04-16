@@ -6,13 +6,14 @@ const ROOM_TOPIC_PREFIX = 'gamejoke/rooms/';
 const ICONS = ['🦊', '🐶', '🐱', '🐭', '🐹', '🐰', '🐯', '🦁'];
 
 export interface Player {
-  id: string; // Using mqtt client id or random id
+  id: string;
   name: string;
   icon: string;
   score: number;
   isHost: boolean;
   isFinished: boolean;
-  finishTime?: number; // timestamp
+  finishTime?: number;
+  lastSeen?: number; // timestamp for heartbeat
 }
 
 interface GameState {
@@ -34,7 +35,16 @@ export const useMultiplayer = (
   const [detailedStatus, setDetailedStatus] = useState('بانتظار البدء...');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [generatedCode, setGeneratedCode] = useState(roomCode || '');
-  const [myId] = useState(() => Math.random().toString(36).substring(2, 10));
+  
+  // PERSISTENT ID
+  const [myId] = useState(() => {
+    let id = localStorage.getItem('gamejoke_player_id');
+    if (!id) {
+      id = Math.random().toString(36).substring(2, 10);
+      localStorage.setItem('gamejoke_player_id', id);
+    }
+    return id;
+  });
   
   const clientRef = useRef<mqtt.MqttClient | null>(null);
   const myIconRef = useRef(ICONS[Math.floor(Math.random() * ICONS.length)]);
@@ -61,7 +71,6 @@ export const useMultiplayer = (
     }
 
     setStatus('CONNECTING');
-    setDetailedStatus('جاري الاتصال بخادم المزامنة اللاسلكي...');
     
     const code = roomCode ? roomCode.trim().toUpperCase() : generateCode();
     setGeneratedCode(code);
@@ -83,49 +92,62 @@ export const useMultiplayer = (
       icon: myIconRef.current,
       score: 0,
       isHost: host,
-      isFinished: false
+      isFinished: false,
+      lastSeen: Date.now()
     };
     playerStateRef.current = me;
     setPlayerList([me]);
 
     client.on('connect', () => {
       setStatus('CONNECTED');
-      setDetailedStatus('متصل بنجاح (4G Ready)');
+      setDetailedStatus('متصل (4G Ready)');
       const topic = `${ROOM_TOPIC_PREFIX}${code}`;
       client.subscribe(topic, (err) => {
         if (!err) {
-          // Announce presence
           client.publish(topic, JSON.stringify({ type: 'IDENTITY', player: me }), { qos: 1 });
         }
       });
     });
 
+    // HEARTBEAT SYSTEM
+    const heartbeatInterval = setInterval(() => {
+      if (client.connected) {
+        publish({ type: 'KEEPALIVE', player: { ...playerStateRef.current!, lastSeen: Date.now() } });
+      }
+    }, 5000);
+
+    const cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      setPlayerList(prev => prev.filter(p => p.id === myId || (p.lastSeen && now - p.lastSeen < 15000)));
+    }, 10000);
+
     client.on('message', (topic, message) => {
       try {
         const data = JSON.parse(message.toString()) as GameState;
-        
         if (data.player?.id === myId && data.type !== 'KEEPALIVE') return;
 
-        if (data.type === 'IDENTITY' && data.player) {
+        const updatedPlayer = data.player ? { ...data.player, lastSeen: Date.now() } : null;
+
+        if ((data.type === 'IDENTITY' || data.type === 'KEEPALIVE') && updatedPlayer) {
           setPlayerList(prev => {
-            const exists = prev.find(p => p.id === data.player?.id);
-            if (exists) return prev;
-            const updated = [...prev, data.player!];
-            // If I am host, reply with my sequence
-            if (host) {
-               client.publish(topic, JSON.stringify({ type: 'IDENTITY', player: me }), { qos: 1 });
+            const exists = prev.find(p => p.id === updatedPlayer.id);
+            if (exists) {
+              return prev.map(p => p.id === updatedPlayer.id ? { ...p, ...updatedPlayer } : p);
+            }
+            const updated = [...prev, updatedPlayer];
+            if (host && data.type === 'IDENTITY') {
+               client.publish(topic, JSON.stringify({ type: 'IDENTITY', player: playerStateRef.current! }), { qos: 1 });
             }
             return updated;
           });
         } 
-        else if (data.type === 'PLAYER_UPDATE' && data.player) {
-          setPlayerList(prev => prev.map(p => p.id === data.player?.id ? data.player! : p));
+        else if (data.type === 'PLAYER_UPDATE' && updatedPlayer) {
+          setPlayerList(prev => prev.map(p => p.id === updatedPlayer.id ? updatedPlayer : p));
         }
         else if (data.type === 'BOARD_SYNC' && data.board && !host) {
           if (onReceiveBoard) onReceiveBoard(data.board);
         }
         else if (data.type === 'RESTART') {
-           // This will be handled in App.tsx by observing resets
            window.dispatchEvent(new CustomEvent('gamejoke_restart'));
         }
       } catch (e) {
@@ -136,21 +158,21 @@ export const useMultiplayer = (
     client.on('error', (err) => {
       console.error('MQTT Error', err);
       setStatus('ERROR');
-      setErrorMsg('فشل الاتصال بخادم المزامنة. تأكد من الإنترنت.');
+      setErrorMsg('فشل المزامنة.');
     });
 
     return () => {
       client.end();
       clientRef.current = null;
+      clearInterval(heartbeatInterval);
+      clearInterval(cleanupInterval);
     };
-  }, [enabled, playerName, roomCode, myId]);
+  }, [enabled, playerName, roomCode, myId, publish]);
 
   const updateMyState = useCallback((updates: Partial<Player>) => {
     if (!playerStateRef.current) return;
-    
-    const newState = { ...playerStateRef.current, ...updates };
+    const newState = { ...playerStateRef.current, ...updates, lastSeen: Date.now() };
     playerStateRef.current = newState;
-    
     setPlayerList(prev => prev.map(p => p.id === myId ? newState : p));
     publish({ type: 'PLAYER_UPDATE', player: newState });
   }, [myId, publish]);
