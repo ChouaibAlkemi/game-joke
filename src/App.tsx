@@ -35,7 +35,16 @@ function App() {
   const [lockBoard, setLockBoard] = useState(false);
   const [showWinner, setShowWinner] = useState(false);
 
-  const { playerList, myPeerId, status, errorMsg, generatedCode, syncScore } = useMultiplayer(
+  const { 
+    playerList, 
+    myPeerId, 
+    status, 
+    detailedStatus, 
+    errorMsg, 
+    generatedCode, 
+    logs,
+    syncScore 
+  } = useMultiplayer(
     selectedRoom, 
     playerName
   );
@@ -57,6 +66,17 @@ function App() {
     setLockBoard(false);
     setShowWinner(false);
   }, []);
+
+  // Effect to handle transitions from Lobby to Multiplayer game
+  useEffect(() => {
+    if (gameMode === 'lobby' && status === 'CONNECTED') {
+      // Small delay to ensure they see the "Connected" status
+      const timer = setTimeout(() => {
+        setGameMode('multiplayer');
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [status, gameMode]);
 
   useEffect(() => {
     if (gameMode !== 'lobby') {
@@ -117,10 +137,13 @@ function App() {
 
   const handleSelectMode = (mode: 'solo' | 'multiplayer', name: string, roomCode?: string) => {
     setPlayerName(name);
-    if (mode === 'multiplayer' && roomCode) {
+    if (mode === 'solo') {
+      setGameMode('solo');
+    } else {
+      // For multiplayer, we set the room but wait for status === 'CONNECTED' 
+      // which is handled by the useEffect above
       setSelectedRoom(roomCode);
     }
-    setGameMode(mode);
   };
 
   if (gameMode === 'lobby') {
