@@ -27,6 +27,7 @@ function App() {
   const [gameMode, setGameMode] = useState<'lobby' | 'solo' | 'multiplayer'>('lobby');
   const [playerName, setPlayerName] = useState<string>(() => localStorage.getItem('gamejoke_player_name') || '');
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>(undefined);
+  const [isConnectionActive, setIsConnectionActive] = useState(false);
   
   const [cards, setCards] = useState<CardType[]>([]);
   const [flippedCards, setFlippedCards] = useState<number[]>([]);
@@ -46,7 +47,9 @@ function App() {
     syncScore 
   } = useMultiplayer(
     selectedRoom, 
-    playerName
+    playerName,
+    undefined,
+    isConnectionActive
   );
 
   const initializeGame = useCallback(() => {
@@ -68,21 +71,20 @@ function App() {
   }, []);
 
   const handleExit = () => {
-    // Completely reset everything
     setGameMode('lobby');
     setSelectedRoom(undefined);
+    setIsConnectionActive(false); // This will kill the PeerJS connection
     setCards([]);
     setPairsMatched(0);
     setMoves(0);
-    // Force a reload to clear the PeerJS instance completely if needed
-    // window.location.reload(); 
-    // Or just let the hook cleanup handle it
   };
 
   // Effect to handle transitions from Lobby to Multiplayer game
   useEffect(() => {
-    const isGuestWaiting = gameMode === 'lobby' && selectedRoom && status === 'CONNECTED';
-    const isHostReady = gameMode === 'lobby' && !selectedRoom && (status === 'IDLE' || status === 'CONNECTED');
+    if (!isConnectionActive || gameMode !== 'lobby') return;
+
+    const isGuestWaiting = selectedRoom && status === 'CONNECTED';
+    const isHostReady = !selectedRoom && (status === 'IDLE' || status === 'CONNECTED');
 
     if (isGuestWaiting || isHostReady) {
       const timer = setTimeout(() => {
@@ -90,7 +92,7 @@ function App() {
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [status, gameMode, selectedRoom]);
+  }, [status, gameMode, selectedRoom, isConnectionActive]);
 
   useEffect(() => {
     if (gameMode !== 'lobby') {
@@ -153,8 +155,10 @@ function App() {
     setPlayerName(name);
     if (mode === 'solo') {
       setGameMode('solo');
+      setIsConnectionActive(false);
     } else {
       setSelectedRoom(roomCode);
+      setIsConnectionActive(true); // Explicitly start connection
     }
   };
 
@@ -163,10 +167,10 @@ function App() {
       <Lobby 
         onSelectMode={handleSelectMode} 
         errorMsg={errorMsg} 
-        status={status}
-        detailedStatus={detailedStatus}
-        logs={logs}
-        myPeerId={myPeerId}
+        status={isConnectionActive ? status : 'IDLE'}
+        detailedStatus={isConnectionActive ? detailedStatus : 'بانتظار البدء...'}
+        logs={isConnectionActive ? logs : []}
+        myPeerId={isConnectionActive ? myPeerId : null}
       />
     );
   }

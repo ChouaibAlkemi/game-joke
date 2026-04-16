@@ -25,7 +25,8 @@ interface SyncData {
 export const useMultiplayer = (
   roomCode?: string, 
   playerName?: string,
-  onReceiveBoard?: (board: any[]) => void
+  onReceiveBoard?: (board: any[]) => void,
+  enabled: boolean = false
 ) => {
   const [peer, setPeer] = useState<Peer | null>(null);
   const [playerList, setPlayerList] = useState<Player[]>([]);
@@ -73,7 +74,18 @@ export const useMultiplayer = (
   }, []);
 
   useEffect(() => {
-    if (!playerName) return;
+    if (!enabled || !playerName) {
+      // Cleanup if disabled
+      if (peer) {
+        addLog('إغلاق الاتصال وتنظيف الذاكرة...');
+        peer.destroy();
+        setPeer(null);
+      }
+      setStatus('IDLE');
+      setPlayerList([]);
+      connectionsRef.current = {};
+      return;
+    }
 
     setErrorMsg(null);
     setStatus('CONNECTING');
@@ -84,12 +96,11 @@ export const useMultiplayer = (
     let finalCode = roomCode ? roomCode.trim().toUpperCase() : generateCode();
     setGeneratedCode(finalCode);
 
-    addLog(host ? `جاري محاولة فتح غرفة: ${finalCode}` : `جاري محاولة الانضمام للغرفة: ${finalCode}`);
-    setDetailedStatus(host ? 'جاري الاتصال بخادم الألعاب...' : 'جاري البحث عن الغرفة...');
+    addLog(host ? `جاري فتح غرفة: ${finalCode}` : `جاري الانضمام للغرفة: ${finalCode}`);
+    setDetailedStatus(host ? 'جاري الاتصال بالخادم...' : 'جاري البحث عن الغرفة...');
 
     const peerId = (host && collisionCountRef.current < 2) ? ROOM_PREFIX + finalCode : undefined;
 
-    // ADVANCED ICE CONFIGURATION
     const peerOptions = {
       debug: 2,
       secure: true,
@@ -112,7 +123,7 @@ export const useMultiplayer = (
     
     newPeer.on('open', (id) => {
       if (isDestroyed) return;
-      addLog(`✅ متصل بالخادم. هويتك: ${id}`);
+      addLog(`✅ متصل. هويتك: ${id}`);
       setPeer(newPeer);
       
       const self: Player = {
@@ -128,20 +139,19 @@ export const useMultiplayer = (
         connectToHost(ROOM_PREFIX + roomCode.trim().toUpperCase(), newPeer);
       } else {
         setStatus('IDLE');
-        setDetailedStatus('الغرفة مفتوحة الآن! بانتظار الخصم...');
+        setDetailedStatus('الغرفة جاهزة! بانتظار الخصم...');
       }
     });
 
     newPeer.on('error', (err) => {
       if (isDestroyed) return;
       const errorDetail = err.message || err.type || JSON.stringify(err);
-      addLog(`!! خطأ تقني: ${errorDetail}`);
+      addLog(`!! خطأ: ${errorDetail}`);
 
       if (err.type === 'peer-unavailable') {
-        setErrorMsg('الغرفة غير موجودة. تأكد من الكود.');
+        setErrorMsg('الغرفة غير موجودة.');
         setStatus('ERROR');
       } else if (err.type === 'unavailable-id' && host) {
-        addLog('الكود محجوز. جاري التغيير...');
         collisionCountRef.current++;
         setTimeout(() => setRetryTrigger(prev => prev + 1), 1000);
       } else {
@@ -152,7 +162,6 @@ export const useMultiplayer = (
 
     newPeer.on('connection', (connection) => {
       if (isDestroyed) return;
-      addLog(`محاولة ربط واردة: ${connection.peer}`);
       setupConnection(connection);
     });
 
@@ -163,36 +172,35 @@ export const useMultiplayer = (
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
-  }, [roomCode, playerName, retryTrigger]);
+  }, [roomCode, playerName, retryTrigger, enabled]);
 
   const connectToHost = (targetId: string, peerInstance: Peer) => {
     if (!peerInstance || peerInstance.destroyed) return;
     
     setStatus('CONNECTING');
-    setDetailedStatus('جاري محاولة اختراق جدار الحماية...');
-    addLog(`طلب ربط تقني مع: ${targetId}`);
+    setDetailedStatus('جاري الربط...');
+    addLog(`طلب ربط مع: ${targetId}`);
     
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       if (status !== 'CONNECTED' && status !== 'ERROR') {
-        addLog('!! فشل عبور جدار الحماية (Timeout)');
-        setErrorMsg('فشل الربط التقني. قد يكون بسبب حظر من مزود الإنترنت أو شبكة 4G.');
+        addLog('!! انتهت مهلة الربط');
+        setErrorMsg('فشل الربط التقني.');
         setStatus('ERROR');
       }
-    }, 25000); // 25 seconds for network traversal
+    }, 25000);
 
-    // Using reliable: true for data channel stability
     const connection = peerInstance.connect(targetId, { reliable: true });
     setupConnection(connection);
   };
 
   const setupConnection = (connection: DataConnection) => {
     connection.on('open', () => {
-      addLog(`✅ تم العبور بنجاح! متصل بـ: ${connection.peer}`);
+      addLog(`✅ متصل مع: ${connection.peer}`);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       connectionsRef.current[connection.peer] = connection;
       setStatus('CONNECTED');
-      setDetailedStatus('تم الاتصال! استعد...');
+      setDetailedStatus('تم الاتصال!');
       setErrorMsg(null);
       startHeartbeat();
       
@@ -220,7 +228,8 @@ export const useMultiplayer = (
           });
         }
       } else if (syncData.type === 'PLAYER_LIST') {
-        setPlayerList(syncData.players || []);
+        const otherPlayers = syncData.players || [];
+        setPlayerList(otherPlayers);
         setStatus('CONNECTED');
       } else if (syncData.type === 'SCORE_UPDATE') {
         setPlayerList(prev => prev.map(p => 
@@ -236,9 +245,9 @@ export const useMultiplayer = (
       delete connectionsRef.current[connection.peer];
       setPlayerList(prev => prev.filter(p => p.peerId !== connection.peer));
     });
-    
+
     connection.on('error', (err) => {
-      addLog(`!! خطأ في قناة البيانات: ${err}`);
+      addLog(`!! خطأ في القناة: ${err}`);
       setStatus('ERROR');
     });
   };
