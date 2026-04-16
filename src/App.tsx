@@ -69,14 +69,16 @@ function App() {
 
   // Effect to handle transitions from Lobby to Multiplayer game
   useEffect(() => {
-    if (gameMode === 'lobby' && status === 'CONNECTED') {
-      // Small delay to ensure they see the "Connected" status
+    const isGuestWaiting = gameMode === 'lobby' && selectedRoom && status === 'CONNECTED';
+    const isHostReady = gameMode === 'lobby' && !selectedRoom && (status === 'IDLE' || status === 'CONNECTED');
+
+    if (isGuestWaiting || isHostReady) {
       const timer = setTimeout(() => {
         setGameMode('multiplayer');
-      }, 800);
+      }, 500);
       return () => clearTimeout(timer);
     }
-  }, [status, gameMode]);
+  }, [status, gameMode, selectedRoom]);
 
   useEffect(() => {
     if (gameMode !== 'lobby') {
