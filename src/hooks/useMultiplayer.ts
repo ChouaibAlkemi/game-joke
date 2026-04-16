@@ -95,11 +95,11 @@ export const useMultiplayer = (
     setGeneratedCode(finalCode);
 
     addLog(host ? `جاري فتح غرفة: ${finalCode}` : `جاري الانضمام للغرفة: ${finalCode}`);
-    setDetailedStatus(host ? 'جاري الاتصال بالخادم الرئيسي...' : 'جاري البحث عن المضيف...');
+    setDetailedStatus(host ? 'جاري الاتصال بخادم الألعاب...' : 'جاري البحث عن المضيف...');
 
     const peerId = (host && collisionCountRef.current < 2) ? ROOM_PREFIX + finalCode : undefined;
 
-    // COMPREHENSIVE ICE CONFIGURATION FOR MOBILE DATA
+    // HIGH-AVAILABILITY TURN RELAY CONFIGURATION (Metered OpenRelay)
     const peerOptions = {
       debug: 2,
       secure: true,
@@ -107,11 +107,18 @@ export const useMultiplayer = (
         'iceServers': [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun.cloudflare.com:3478' },
-          { urls: 'stun:stun.services.mozilla.com' }
+          {
+            urls: [
+              'turn:openrelay.metered.ca:80',
+              'turn:openrelay.metered.ca:443',
+              'turn:openrelay.metered.ca:443?transport=tcp'
+            ],
+            username: 'openrelay',
+            credential: 'openrelay'
+          }
         ],
+        'iceTransportPolicy': 'all',
         'iceCandidatePoolSize': 10
       }
     };
@@ -143,8 +150,8 @@ export const useMultiplayer = (
 
     newPeer.on('error', (err) => {
       if (isDestroyed) return;
-      console.error('Peer error:', err.type, err);
-      addLog(`!! خطأ تقني: ${err.type}`);
+      const errorDetail = err.message || err.type || JSON.stringify(err);
+      addLog(`!! خطأ تقني: ${errorDetail}`);
 
       if (err.type === 'peer-unavailable') {
         setErrorMsg('الغرفة غير موجودة. تأكد من الكود.');
@@ -152,11 +159,8 @@ export const useMultiplayer = (
       } else if (err.type === 'unavailable-id' && host) {
         collisionCountRef.current++;
         setTimeout(() => setRetryTrigger(prev => prev + 1), 1000);
-      } else if (err.type === 'network') {
-        setErrorMsg('مشكلة في الشبكة. تأكد من الـ 4G/Wi-Fi.');
-        setStatus('ERROR');
       } else {
-        setErrorMsg(`فشل: ${err.type}`);
+        setErrorMsg(`خطأ: ${err.type}`);
         setStatus('ERROR');
       }
     });
@@ -180,32 +184,32 @@ export const useMultiplayer = (
     if (!peerInstance || peerInstance.destroyed) return;
     
     setStatus('CONNECTING');
-    setDetailedStatus('جاري محاولة تجاوز حظر الشبكة...');
-    addLog(`طلب ربط مع المضيف: ${targetId}`);
+    setDetailedStatus('جاري محاولة الربط عبر خادم الترحيل...');
+    addLog(`طلب ربط تقني مع: ${targetId}`);
     
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       if (status !== 'CONNECTED' && status !== 'ERROR') {
-        addLog('!! فشل عبور جدار الحماية (Timeout)');
-        setErrorMsg('فشل الربط التقني. قد يكون بسبب حظر من الـ 4G. جرب استخدام Wi-Fi أو العكس.');
+        addLog('!! فشل عبور جدار الحماية حتى باستخدام الترحيل');
+        setErrorMsg('فشل الربط التقني. قد يكون بسبب حظر شديد من الـ 4G. جرب استبدال الشبكة.');
         setStatus('ERROR');
       }
-    }, 25000);
+    }, 28000); // 28 seconds for TURN traversal
 
     const connection = peerInstance.connect(targetId, { 
       reliable: true,
-      serialization: 'json' // More robust for heterogeneous devices
+      serialization: 'json'
     });
     setupConnection(connection);
   };
 
   const setupConnection = (connection: DataConnection) => {
     connection.on('open', () => {
-      addLog(`✅ قناة الربط مفتوحة الآن!`);
+      addLog(`✅ نجاح الربط عبر TURN/STUN!`);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       connectionsRef.current[connection.peer] = connection;
       setStatus('CONNECTED');
-      setDetailedStatus('تم الربط بنجاح!');
+      setDetailedStatus('متصل بنجاح!');
       setErrorMsg(null);
       startHeartbeat();
       
@@ -252,9 +256,6 @@ export const useMultiplayer = (
 
     connection.on('error', (err) => {
       addLog(`!! خطأ في قناة الربط: ${err}`);
-      if (String(err).includes('negotiation')) {
-        setErrorMsg('فشل الربط التقني بسبب قيود الشبكة (Negotiation Failed).');
-      }
       setStatus('ERROR');
     });
   };
