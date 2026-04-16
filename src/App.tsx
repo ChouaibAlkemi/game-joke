@@ -128,7 +128,10 @@ function App() {
       <Lobby 
         onSelectMode={handleSelectMode} 
         errorMsg={errorMsg} 
-        status={status} 
+        status={status}
+        detailedStatus={detailedStatus}
+        logs={logs}
+        myPeerId={myPeerId}
       />
     );
   }

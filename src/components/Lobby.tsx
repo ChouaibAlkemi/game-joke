@@ -4,13 +4,24 @@ interface LobbyProps {
   onSelectMode: (mode: 'solo' | 'multiplayer', playerName: string, roomCode?: string) => void;
   errorMsg?: string | null;
   status: 'IDLE' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
+  detailedStatus?: string;
+  logs?: string[];
+  myPeerId?: string | null;
 }
 
-const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
+const Lobby: React.FC<LobbyProps> = ({ 
+  onSelectMode, 
+  errorMsg, 
+  status, 
+  detailedStatus, 
+  logs = [],
+  myPeerId 
+}) => {
   const [showJoinInput, setShowJoinInput] = useState(false);
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('gamejoke_player_name') || '');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
     if (errorMsg) {
@@ -39,7 +50,7 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
   const handleRoomCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.toUpperCase();
     setRoomCode(val);
-    if (localError) setLocalError(null); // Clear error when typing
+    if (localError) setLocalError(null);
   };
 
   return (
@@ -67,6 +78,13 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
         </div>
         
         {localError && <div className="error-message fade-in">{localError}</div>}
+        
+        {status === 'CONNECTING' && detailedStatus && (
+          <div className="connecting-info fade-in">
+            <div className="spinner"></div>
+            <p>{detailedStatus}</p>
+          </div>
+        )}
         
         {!showJoinInput ? (
           <div className="mode-selection">
@@ -101,14 +119,36 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
                 onClick={handleJoinRoom}
                 disabled={status === 'CONNECTING'}
               >
-                {status === 'CONNECTING' ? 'جاري التحقق...' : 'انضم الآن'}
+                {status === 'CONNECTING' ? 'سيفحص...' : 'انضم الآن'}
               </button>
-              <button className="lobby-btn ghost-btn" onClick={() => validateAndSelect('multiplayer')}>
+              <button 
+                className="lobby-btn ghost-btn" 
+                onClick={() => validateAndSelect('multiplayer')}
+                disabled={status === 'CONNECTING'}
+              >
                 إنشاء غرفة جديدة
               </button>
               <button className="lobby-btn tertiary-btn" onClick={() => setShowJoinInput(false)}>
                 رجوع
               </button>
+            </div>
+          </div>
+        )}
+
+        <div className="debug-toggle" onClick={() => setShowDebug(!showDebug)}>
+          {showDebug ? 'إخفاء سجل الاتصال ▲' : 'إظهار سجل الاتصال التقني ▼'}
+        </div>
+
+        {showDebug && (
+          <div className="debug-panel fade-in">
+            <div className="debug-header">
+              <span>هوية الجهاز: {myPeerId || '... جارِ الجلب'}</span>
+              <span className={`status-badge ${status}`}>{status}</span>
+            </div>
+            <div className="debug-logs">
+              {logs.length > 0 ? logs.map((log, i) => (
+                <div key={i} className="log-line">{log}</div>
+              )) : <div className="log-line empty">لا توجد سجلات بعد...</div>}
             </div>
           </div>
         )}
@@ -135,140 +175,63 @@ const Lobby: React.FC<LobbyProps> = ({ onSelectMode, errorMsg, status }) => {
           box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
 
-        .logo-wrapper {
-          margin-bottom: 30px;
+        .logo-wrapper { margin-bottom: 30px; }
+        .main-logo { max-width: 200px; height: auto; filter: drop-shadow(0 0 15px var(--accent-muted)); }
+        .lobby-title { font-size: 24px; margin-bottom: 40px; color: var(--text-primary); }
+        .name-section { margin-bottom: 32px; text-align: right; }
+        .input-label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 14px; }
+
+        .name-input, .room-input {
+          width: 100%; padding: 14px; border-radius: 12px; border: 1px solid #30363d;
+          background-color: #0d1117; color: #fff; font-size: 16px; text-align: right;
         }
 
-        .main-logo {
-          max-width: 200px;
-          height: auto;
-          filter: drop-shadow(0 0 15px var(--accent-muted));
+        .room-input { text-align: center; font-weight: 700; letter-spacing: 2px; }
+        .error-message { color: #f85149; background-color: rgba(248, 81, 73, 0.1); padding: 10px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+
+        .connecting-info {
+          display: flex; align-items: center; justify-content: center; gap: 12px;
+          padding: 15px; background: rgba(0, 215, 192, 0.1); border-radius: 10px; margin-bottom: 20px;
         }
 
-        .lobby-title {
-          font-size: 24px;
-          margin-bottom: 40px;
-          color: var(--text-primary);
+        .spinner { width: 16px; height: 16px; border: 2px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+
+        .mode-selection, .join-section { display: flex; flex-direction: column; gap: 16px; }
+        .lobby-btn { padding: 14px 28px; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; border: none; transition: 0.2s; }
+        .primary-btn { background: var(--accent); color: #000; }
+        .secondary-btn { background: #30363d; color: var(--text-primary); }
+        .ghost-btn { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
+        .tertiary-btn { background: transparent; color: var(--text-secondary); }
+
+        .debug-toggle {
+          margin-top: 30px; font-size: 12px; color: var(--text-secondary); cursor: pointer;
+          text-decoration: underline; opacity: 0.7;
         }
 
-        .name-section {
-          margin-bottom: 32px;
-          text-align: right;
+        .debug-panel {
+          margin-top: 20px; text-align: left; background: #0d1117; border-radius: 10px;
+          border: 1px solid #30363d; overflow: hidden;
         }
 
-        .input-label {
-          display: block;
-          margin-bottom: 8px;
-          color: var(--text-secondary);
-          font-weight: 600;
-          font-size: 14px;
+        .debug-header {
+          padding: 8px 12px; background: #1c2128; font-size: 11px; color: var(--text-secondary);
+          display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d;
         }
 
-        .name-input {
-          width: 100%;
-          padding: 14px;
-          border-radius: 12px;
-          border: 1px solid #30363d;
-          background-color: #0d1117;
-          color: #fff;
-          font-size: 16px;
-          text-align: right;
+        .status-badge { padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 800; }
+        .status-badge.CONNECTED { background: #238636; color: #fff; }
+        .status-badge.CONNECTING { background: #d29922; color: #fff; }
+        .status-badge.ERROR { background: #f85149; color: #fff; }
+
+        .debug-logs {
+          padding: 10px; font-family: monospace; font-size: 10px; max-height: 150px;
+          overflow-y: auto; color: #8b949e; line-height: 1.4;
         }
 
-        .name-input:focus {
-          outline: none;
-          border-color: var(--accent);
-          box-shadow: 0 0 0 2px var(--accent-muted);
-        }
+        .log-line { border-bottom: 1px solid #21262d; padding: 2px 0; }
+        .log-line.empty { text-align: center; padding: 20px; opacity: 0.5; }
 
-        .error-message {
-          color: #f85149;
-          background-color: rgba(248, 81, 73, 0.1);
-          padding: 10px;
-          border-radius: 8px;
-          margin-bottom: 20px;
-          font-size: 14px;
-          border: 1px solid rgba(248, 81, 73, 0.2);
-        }
-
-        .mode-selection, .join-section {
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-
-        .lobby-btn {
-          padding: 14px 28px;
-          border-radius: 12px;
-          font-size: 16px;
-          font-weight: 700;
-          cursor: pointer;
-          border: none;
-          transition: all 0.2s ease;
-        }
-
-        .lobby-btn:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        .primary-btn {
-          background-color: var(--accent);
-          color: #000;
-        }
-
-        .secondary-btn {
-          background-color: var(--card-bg);
-          color: var(--text-primary);
-          border: 1px solid #444;
-        }
-
-        .ghost-btn {
-          background-color: transparent;
-          color: var(--accent);
-          border: 1.5px solid var(--accent);
-        }
-
-        .tertiary-btn {
-          background-color: transparent;
-          color: var(--text-secondary);
-          padding: 8px;
-        }
-
-        .room-input {
-          padding: 14px;
-          border-radius: 12px;
-          border: 1px solid #30363d;
-          background-color: #0d1117;
-          color: #fff;
-          font-size: 18px;
-          text-align: center;
-          font-weight: 700;
-          letter-spacing: 2px;
-        }
-
-        .loading {
-          position: relative;
-          color: transparent !important;
-        }
-
-        .loading::after {
-          content: "";
-          position: absolute;
-          width: 20px;
-          height: 20px;
-          top: 50%;
-          left: 50%;
-          margin: -10px 0 0 -10px;
-          border: 2px solid #000;
-          border-top-color: transparent;
-          border-radius: 50%;
-          animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
