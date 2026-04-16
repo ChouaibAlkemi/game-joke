@@ -35,6 +35,7 @@ export const useMultiplayer = (
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [generatedCode, setGeneratedCode] = useState<string>(roomCode || '');
   const [logs, setLogs] = useState<string[]>([]);
+  const [retryTrigger, setRetryTrigger] = useState(0); // Used to force effect re-run
 
   const connectionsRef = useRef<{ [peerId: string]: DataConnection }>({});
   const myIconRef = useRef(ICONS[Math.floor(Math.random() * ICONS.length)]);
@@ -74,12 +75,16 @@ export const useMultiplayer = (
   useEffect(() => {
     if (!playerName) return;
 
+    // Reset local state for new attempt
+    setErrorMsg(null);
+    setStatus('CONNECTING');
+
     let finalCode = roomCode ? roomCode.trim().toUpperCase() : generateCode();
     setGeneratedCode(finalCode);
     const host = !roomCode;
     setIsHost(host);
 
-    addLog(host ? `بدء إنشاء غرفة جديدة: ${finalCode}` : `بدء محاولة الانضمام للغرفة: ${finalCode}`);
+    addLog(host ? `جاري محاولة فتح غرفة: ${finalCode}` : `جاري محاولة الانضمام للغرفة: ${finalCode}`);
     setDetailedStatus(host ? 'جاري الاتصال بخادم الألعاب...' : 'جاري البحث عن الغرفة...');
 
     const peerId = host ? ROOM_PREFIX + finalCode : undefined;
@@ -96,9 +101,11 @@ export const useMultiplayer = (
     };
 
     const newPeer = peerId ? new Peer(peerId, peerOptions) : new Peer(peerOptions);
+    let isDestroyed = false;
     
     newPeer.on('open', (id) => {
-      addLog(`تم الاتصال بالخادم. هويتك: ${id}`);
+      if (isDestroyed) return;
+      addLog(`✅ تم الاتصال. هويتك: ${id}`);
       setPeer(newPeer);
       
       const self: Player = {
@@ -114,59 +121,67 @@ export const useMultiplayer = (
         connectToHost(ROOM_PREFIX + roomCode.trim().toUpperCase(), newPeer);
       } else {
         setStatus('IDLE');
-        setDetailedStatus('بانتظار انضمام لاعب آخر...');
+        setDetailedStatus('الغرفة مفتوحة الآن! بانتظار انضمام لاعب آخر...');
       }
     });
 
     newPeer.on('connection', (connection) => {
-      addLog(`لاعب جديد يحاول الاتصال: ${connection.peer}`);
+      if (isDestroyed) return;
+      addLog(`لاعب جديد في الانتظار: ${connection.peer}`);
       setupConnection(connection);
     });
 
     newPeer.on('error', (err) => {
-      addLog(`!! خطأ في الخادم: ${err.type}`);
+      if (isDestroyed) return;
+      console.error('Peer error handler:', err.type, err);
+      addLog(`!! خطأ تقني: ${err.type}`);
+
       if (err.type === 'peer-unavailable') {
         if (!host && retryCountRef.current < 2) {
           retryCountRef.current++;
-          addLog(`الغرفة لم تستجب، محاولة إعادة الاتصال (${retryCountRef.current})...`);
+          addLog(`تعذر العثور على الغرفة، سأحاول مجدداً (${retryCountRef.current})...`);
           setTimeout(() => {
-            if (peer) connectToHost(ROOM_PREFIX + (roomCode || '').trim().toUpperCase(), peer);
+            if (!isDestroyed) connectToHost(ROOM_PREFIX + (roomCode || '').trim().toUpperCase(), newPeer);
           }, 2000);
         } else {
-          setErrorMsg('الغرفة غير موجودة. تأكد من أن "المضيف" قد بدأ اللعبة فعلاً.');
-          setDetailedStatus('فشل في العثور على الغرفة');
+          setErrorMsg('الغرفة غير موجودة. تأكد من أن المضيف قد أنشأ الغرفة برقم صحيح.');
+          setDetailedStatus('فشل في الوصول للغرفة');
           setStatus('ERROR');
         }
       } else if (err.type === 'unavailable-id' && host) {
-        addLog('هذا الكود مستخدم بالفعل، جاري تجديد الكود...');
-        const retryCode = generateCode();
-        setGeneratedCode(retryCode);
+        addLog('هذا الكود محجوز لشخص آخر، جاري تجديد الكود والمحاولة ثانية...');
+        // Increment trigger to force useEffect re-run with a new code
+        setTimeout(() => setRetryTrigger(prev => prev + 1), 1000);
       } else {
-        setErrorMsg(`خطأ: ${err.type}`);
+        setErrorMsg(`فشل في الاتصال: ${err.type}`);
         setStatus('ERROR');
       }
     });
 
     return () => {
+      isDestroyed = true;
       newPeer.destroy();
+      setPeer(null);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
-  }, [roomCode, playerName]);
+  }, [roomCode, playerName, retryTrigger]);
 
   const connectToHost = (targetId: string, peerInstance: Peer) => {
+    if (!peerInstance || peerInstance.destroyed) return;
+    
     setStatus('CONNECTING');
-    setDetailedStatus('جاري الربط مع المضيف...');
-    addLog(`جاري محاولة الربط الهاتفي (Handshake) مع: ${targetId}`);
+    setDetailedStatus('جاري محاولة الربط الهاتفي...');
+    addLog(`جاري طلب الربط مع: ${targetId}`);
     
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       if (status !== 'CONNECTED' && status !== 'ERROR') {
-        addLog('!! انتهت مهلة الانتظار');
-        setErrorMsg('فشل في الربط مع المضيف. قد يكون بسبب شبكة إنترنت ضعيفة أو جدار حماية.');
+        addLog('!! انتهت مهلة الانتظار للهاتف');
+        setErrorMsg('فشل الربط التقني. قد يكون بسبب جدار حماية في الشبكة.');
         setStatus('ERROR');
       }
-    }, 10000);
+    }, 12000); // 12 seconds for stability
 
     const connection = peerInstance.connect(targetId, {
       reliable: true
@@ -176,11 +191,11 @@ export const useMultiplayer = (
 
   const setupConnection = (connection: DataConnection) => {
     connection.on('open', () => {
-      addLog(`✅ نجاح الربط مع: ${connection.peer}`);
+      addLog(`✅ تم إنشاء قناة البيانات مع: ${connection.peer}`);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       connectionsRef.current[connection.peer] = connection;
       setStatus('CONNECTED');
-      setDetailedStatus('تم الاتصال! جاري تبادل البيانات...');
+      setDetailedStatus('أنت متصل الآن!');
       setErrorMsg(null);
       retryCountRef.current = 0;
       startHeartbeat();
@@ -195,7 +210,7 @@ export const useMultiplayer = (
     connection.on('data', (data: any) => {
       const syncData = data as SyncData;
       if (syncData.type === 'IDENTITY') {
-        addLog(`تم التعرف على لاعب: ${syncData.name}`);
+        addLog(`لاعب جديد انضم: ${syncData.name}`);
         if (isHost) {
           setPlayerList(prev => {
             const newList = [...prev, { 
@@ -212,19 +227,17 @@ export const useMultiplayer = (
         addLog('تم تحديث قائمة اللاعبين من المضيف');
         setPlayerList(syncData.players || []);
         setStatus('CONNECTED');
-        setDetailedStatus('أنت الآن متصل باللعبة!');
       } else if (syncData.type === 'SCORE_UPDATE') {
         setPlayerList(prev => prev.map(p => 
           p.peerId === connection.peer ? { ...p, score: syncData.pairsMatched || 0 } : p
         ));
       } else if (syncData.type === 'INITIAL_BOARD' && syncData.board) {
-        addLog('تم استلام لوحة اللعب');
         if (onReceiveBoard) onReceiveBoard(syncData.board);
       }
     });
 
     connection.on('close', () => {
-      addLog('!! انقطع الاتصال بأحد اللاعبين');
+      addLog('!! انقطع الاتصال');
       delete connectionsRef.current[connection.peer];
       setPlayerList(prev => prev.filter(p => p.peerId !== connection.peer));
     });
