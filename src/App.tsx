@@ -41,6 +41,9 @@ function App() {
   const [pairsMatched, setPairsMatched] = useState(0);
   const [lockBoard, setLockBoard] = useState(false);
   const [showWinner, setShowWinner] = useState(false);
+  const [notification, setNotification] = useState<{ text: string, type: string } | null>(null);
+  const [isShaking, setIsShaking] = useState(false);
+  const [localMatchCount, setLocalMatchCount] = useState(2);
 
   const { 
     playerList, 
@@ -60,6 +63,22 @@ function App() {
   );
 
   const me = useMemo(() => playerList.find(p => p.id === myId), [playerList, myId]);
+  
+  useEffect(() => {
+    if (gameMode === 'multiplayer' && me) {
+      setLocalMatchCount(me.matchCountRequired);
+    }
+  }, [me, gameMode]);
+
+  const triggerShake = () => {
+    setIsShaking(true);
+    setTimeout(() => setIsShaking(false), 500);
+  };
+
+  const showNotification = (text: string, type: 'danger' | 'info' | 'warning') => {
+    setNotification({ text, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
   const totalPossibleMatches = useMemo(() => CARD_IMAGES.length, []);
   
   const isAllFinished = useMemo(() => {
@@ -153,8 +172,12 @@ function App() {
 
   const triggerDynamicX3 = useCallback(() => {
     setLockBoard(true);
-    updateMyState({ matchCountRequired: 3 });
-
+    showNotification('⚡ تم تفعيل وضع التحدي الثلاثي ⚡', 'warning');
+    if (gameMode === 'multiplayer') {
+      updateMyState({ matchCountRequired: 3 });
+    } else {
+      setLocalMatchCount(3);
+    }
     // 1. Identify unmatched character types
     const matchedContents = new Set(cards.filter(c => c.isMatched).map(c => c.content));
     const unmatchedNormalContents = CARD_IMAGES.filter(c => !matchedContents.has(c));
@@ -201,6 +224,11 @@ function App() {
     // Trap handling
     if (clickedCard.type !== 'normal') {
       setLockBoard(true);
+      triggerShake();
+      
+      if (clickedCard.type === 'bomb') showNotification('💣 فخ القنبلة! عدت للصفر 💣', 'danger');
+      if (clickedCard.type === 'shuffle') showNotification('🔄 إعادة خلط كاملة 🔄', 'info');
+
       setTimeout(() => {
         let finalCards = updatedCards.map(c => {
           if (c.id === id) return { ...c, isHidden: true };
@@ -301,15 +329,20 @@ function App() {
   }
 
   return (
-    <div className="game-container fade-in">
+    <div className={`game-container fade-in ${isShaking ? 'shake-anim' : ''}`}>
+      {notification && (
+        <div className={`global-notification notify-${notification.type}`}>
+          {notification.text}
+        </div>
+      )}
       <header className="game-header">
         <div className="header-right">
           <div className="logo-mini">
             <img src="/LOGO.png" alt="Logo" />
           </div>
           <h1>لعبة الذاكرة المطورة</h1>
-          <p className={`subtitle ${me?.matchCountRequired === 3 ? 'warning-text' : ''}`}>
-            {me?.matchCountRequired === 3 ? '⚠️ وضع التحدي الثلاثي مفعل لديك ⚠️' : 'مطابقة زوجية قياسية'}
+          <p className={`subtitle ${localMatchCount === 3 ? 'warning-text' : ''}`}>
+            {localMatchCount === 3 ? '⚠️ وضع التحدي الثلاثي مفعل لديك ⚠️' : 'مطابقة زوجية قياسية'}
           </p>
         </div>
         <div className="header-left">
@@ -388,8 +421,31 @@ function App() {
       </div>
 
       <style>{`
-        .game-container { max-width: 1200px; margin: 0 auto; padding: 15px; direction: rtl; }
+        .game-container { max-width: 1200px; margin: 0 auto; padding: 15px; direction: rtl; transition: transform 0.1s; }
         .game-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+        
+        /* SHAKE ANIMATION */
+        .shake-anim { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; transform: translate3d(0, 0, 0); }
+        @keyframes shake {
+          10%, 90% { transform: translate3d(-1px, 0, 0); }
+          20%, 80% { transform: translate3d(2px, 0, 0); }
+          30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+          40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+
+        /* NOTIFICATIONS */
+        .global-notification {
+          position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+          padding: 15px 30px; border-radius: 50px; font-weight: 800; z-index: 2000;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.5); animation: slideDown 0.4s ease-out;
+          pointer-events: none; text-align: center; min-width: 300px;
+        }
+        @keyframes slideDown { from { top: -100px; opacity: 0; } to { top: 20px; opacity: 1; } }
+
+        .notify-danger { background: #f85149; color: #fff; border: 2px solid #ff7b72; }
+        .notify-warning { background: #d29922; color: #000; border: 2px solid #e3b341; }
+        .notify-info { background: #388bfd; color: #fff; border: 2px solid #58a6ff; }
+
         .subtitle { color: var(--accent); font-weight: bold; font-size: 14px; margin-top: 5px; }
         .warning-text { color: #d29922; animation: blink 1s infinite; }
         @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }

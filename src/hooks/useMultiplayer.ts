@@ -12,7 +12,7 @@ export interface Player {
   score: number;
   isHost: boolean;
   isFinished: boolean;
-  matchCountRequired: number; // New: individual difficulty
+  matchCountRequired: number;
   finishTime?: number;
   lastSeen?: number;
 }
@@ -35,8 +35,25 @@ export const useMultiplayer = (
   const [status, setStatus] = useState<'IDLE' | 'CONNECTING' | 'CONNECTED' | 'ERROR'>('IDLE');
   const [detailedStatus, setDetailedStatus] = useState('بانتظار البدء...');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [generatedCode, setGeneratedCode] = useState(roomCode || '');
   
+  // Stabilize generatedCode - only changes when roomCode prop changes
+  const [generatedCode, setGeneratedCode] = useState(() => {
+    if (roomCode) return roomCode.trim().toUpperCase();
+    return '';
+  });
+  
+  // Refs to avoid infinite loops in callbacks
+  const clientRef = useRef<mqtt.MqttClient | null>(null);
+  const playerStateRef = useRef<Player | null>(null);
+  const currentCodeRef = useRef(generatedCode);
+  const myIconRef = useRef(ICONS[Math.floor(Math.random() * ICONS.length)]);
+
+  useEffect(() => {
+    currentCodeRef.current = generatedCode;
+  }, [generatedCode]);
+
+  const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+
   // PERSISTENT ID
   const [myId] = useState(() => {
     let id = localStorage.getItem('gamejoke_player_id');
@@ -46,19 +63,14 @@ export const useMultiplayer = (
     }
     return id;
   });
-  
-  const clientRef = useRef<mqtt.MqttClient | null>(null);
-  const myIconRef = useRef(ICONS[Math.floor(Math.random() * ICONS.length)]);
-  const playerStateRef = useRef<Player | null>(null);
-
-  const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   const publish = useCallback((data: GameState) => {
-    if (clientRef.current && clientRef.current.connected && (roomCode || generatedCode)) {
-      const topic = `${ROOM_TOPIC_PREFIX}${roomCode || generatedCode}`;
+    const codeToUse = roomCode?.trim().toUpperCase() || currentCodeRef.current;
+    if (clientRef.current && clientRef.current.connected && codeToUse) {
+      const topic = `${ROOM_TOPIC_PREFIX}${codeToUse}`;
       clientRef.current.publish(topic, JSON.stringify(data), { qos: 1 });
     }
-  }, [roomCode, generatedCode]);
+  }, [roomCode]);
 
   useEffect(() => {
     if (!enabled || !playerName) {
@@ -73,15 +85,26 @@ export const useMultiplayer = (
 
     setStatus('CONNECTING');
     
-    const code = roomCode ? roomCode.trim().toUpperCase() : generateCode();
-    setGeneratedCode(code);
+    // Only generate new code if we don't have one and we are host
+    let activeCode = roomCode?.trim().toUpperCase();
+    if (!activeCode) {
+      if (!currentCodeRef.current) {
+        activeCode = generateCode();
+        setGeneratedCode(activeCode);
+      } else {
+        activeCode = currentCodeRef.current;
+      }
+    } else {
+      setGeneratedCode(activeCode);
+    }
+
     const host = !roomCode;
     setIsHost(host);
 
     const client = mqtt.connect(BROKER_URL, {
       clientId: `gamejoke_${myId}`,
       clean: true,
-      connectTimeout: 4000,
+      connectTimeout: 5000,
       reconnectPeriod: 2000,
     });
 
@@ -103,7 +126,7 @@ export const useMultiplayer = (
     client.on('connect', () => {
       setStatus('CONNECTED');
       setDetailedStatus('متصل (4G Ready)');
-      const topic = `${ROOM_TOPIC_PREFIX}${code}`;
+      const topic = `${ROOM_TOPIC_PREFIX}${activeCode}`;
       client.subscribe(topic, (err) => {
         if (!err) {
           client.publish(topic, JSON.stringify({ type: 'IDENTITY', player: me }), { qos: 1 });
@@ -111,19 +134,20 @@ export const useMultiplayer = (
       });
     });
 
-    // HEARTBEAT SYSTEM
     const heartbeatInterval = setInterval(() => {
       if (client.connected) {
-        publish({ type: 'KEEPALIVE', player: { ...playerStateRef.current!, lastSeen: Date.now() } });
+        const payload: GameState = { type: 'KEEPALIVE', player: { ...playerStateRef.current!, lastSeen: Date.now() } };
+        const topic = `${ROOM_TOPIC_PREFIX}${activeCode}`;
+        client.publish(topic, JSON.stringify(payload), { qos: 0 });
       }
     }, 5000);
 
     const cleanupInterval = setInterval(() => {
       const now = Date.now();
-      setPlayerList(prev => prev.filter(p => p.id === myId || (p.lastSeen && now - p.lastSeen < 15000)));
+      setPlayerList(prev => prev.filter(p => p.id === myId || (p.lastSeen && now - p.lastSeen < 20000)));
     }, 10000);
 
-    client.on('message', (topic, message) => {
+    client.on('message', (_topic, message) => {
       try {
         const data = JSON.parse(message.toString()) as GameState;
         if (data.player?.id === myId && data.type !== 'KEEPALIVE') return;
@@ -138,7 +162,8 @@ export const useMultiplayer = (
             }
             const updated = [...prev, updatedPlayer];
             if (host && data.type === 'IDENTITY') {
-               client.publish(topic, JSON.stringify({ type: 'IDENTITY', player: playerStateRef.current! }), { qos: 1 });
+               const identityPayload = JSON.stringify({ type: 'IDENTITY', player: playerStateRef.current! });
+               client.publish(`${ROOM_TOPIC_PREFIX}${activeCode}`, identityPayload, { qos: 1 });
             }
             return updated;
           });
@@ -169,7 +194,7 @@ export const useMultiplayer = (
       clearInterval(heartbeatInterval);
       clearInterval(cleanupInterval);
     };
-  }, [enabled, playerName, roomCode, myId, publish]);
+  }, [enabled, playerName, roomCode, myId]); // Removed publish from deps to break loop
 
   const updateMyState = useCallback((updates: Partial<Player>) => {
     if (!playerStateRef.current) return;
