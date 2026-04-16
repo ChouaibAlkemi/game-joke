@@ -44,6 +44,7 @@ function App() {
   const [notification, setNotification] = useState<{ text: string, type: string } | null>(null);
   const [isShaking, setIsShaking] = useState(false);
   const [localMatchCount, setLocalMatchCount] = useState(2);
+  const [isSpectating, setIsSpectating] = useState(false);
 
   const { 
     playerList, 
@@ -124,6 +125,7 @@ function App() {
     setMoves(0);
     setLockBoard(false);
     setShowWinner(false);
+    setIsSpectating(false);
 
     if (gameMode === 'multiplayer' && (!selectedRoom || me?.isHost)) {
       broadcastBoard(shuffledBoard);
@@ -133,12 +135,20 @@ function App() {
   const handleRestart = () => {
     if (gameMode === 'multiplayer') broadcastRestart();
     updateMyState({ matchCountRequired: 2, score: 0, isFinished: false });
+    setIsSpectating(false);
     initializeBoard();
   };
 
   useEffect(() => {
+    if (isAllFinished && isSpectating) {
+      setIsSpectating(false);
+    }
+  }, [isAllFinished, isSpectating]);
+
+  useEffect(() => {
     const onRemoteRestart = () => {
       updateMyState({ matchCountRequired: 2, score: 0, isFinished: false });
+      setIsSpectating(false);
       initializeBoard();
     };
     window.addEventListener('akahow_restart', onRemoteRestart);
@@ -366,7 +376,7 @@ function App() {
             moves={moves}
           />
 
-          {showWinner && (
+          {showWinner && !isSpectating && (
             <div className="winner-overlay">
               <div className="winner-card shadow-lg">
                 <h2>{me?.isFinished && !isAllFinished ? 'المرحلة الأولى انتهت! 👏' : 'اكتملت جميع التحديات! 🎉'}</h2>
@@ -374,7 +384,12 @@ function App() {
                    {leaderId === myId ? 'أنت ملك الذاكرة حالياً! 👑' : 'ننتظر النتيجة النهائية'}
                 </div>
                 {gameMode === 'multiplayer' && !isAllFinished && (
-                  <p className="waiting-msg pulse">المنافس لا يزال يجمع الصور...</p>
+                  <div className="victory-actions">
+                    <p className="waiting-msg pulse">المنافس لا يزال يجمع الصور...</p>
+                    <button className="btn btn-secondary" onClick={() => setIsSpectating(true)}>
+                      👁️ مشاهدة البقية (Spectate)
+                    </button>
+                  </div>
                 )}
                 {isAllFinished && (
                    <div className="final-ranking">
@@ -398,7 +413,14 @@ function App() {
             </div>
           )}
 
-          <div className={`card-grid size-${cards.length} ${me?.isFinished ? 'dimmed' : ''}`}>
+          {isSpectating && (
+             <div className="spectator-banner fade-in">
+                <span>👁️ أنت الآن في وضع المشاهدة...</span>
+                <button className="btn-link" onClick={() => setIsSpectating(false)}>العودة للنتائج</button>
+             </div>
+          )}
+
+          <div className={`card-grid size-${cards.length} ${me?.isFinished && !isSpectating ? 'dimmed' : ''} ${isSpectating ? 'spectating-view' : ''}`}>
             {cards.map(card => (
               <Card 
                 key={`${card.id}`}
@@ -447,6 +469,16 @@ function App() {
         .notify-warning { background: #d29922; color: #000; border: 2px solid #e3b341; }
         .notify-info { background: #388bfd; color: #fff; border: 2px solid #58a6ff; }
 
+        .spectator-banner {
+          position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+          background: rgba(13, 17, 23, 0.9); backdrop-filter: blur(10px);
+          padding: 12px 24px; border-radius: 40px; border: 1px solid var(--accent);
+          display: flex; gap: 15px; align-items: center; z-index: 1000;
+          box-shadow: 0 -5px 25px rgba(0,0,0,0.5); font-weight: 700; color: #fff;
+        }
+        .btn-link { background: none; border: none; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: 14px; }
+        .victory-actions { display: flex; flex-direction: column; align-items: center; gap: 15px; margin-top: 10px; }
+
         .subtitle { color: var(--accent); font-weight: bold; font-size: 14px; margin-top: 5px; }
         .warning-text { color: #d29922; animation: blink 1s infinite; }
         @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
@@ -469,6 +501,7 @@ function App() {
         }
 
         .card-grid.dimmed { opacity: 0.15; pointer-events: none; }
+        .card-grid.spectating-view { opacity: 0.7; pointer-events: none; }
         
         .winner-overlay { position: absolute; inset: 0; background: rgba(13, 17, 23, 0.99); z-index: 1000; display: flex; align-items: center; justify-content: center; border-radius: 12px; }
         .winner-card { background: #1c2128; padding: 40px; border-radius: 20px; border: 2px solid var(--accent); text-align: center; width: 95%; max-width: 480px; box-shadow: 0 0 60px rgba(0,215,192,0.2); }
